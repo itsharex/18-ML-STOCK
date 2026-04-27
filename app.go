@@ -1624,7 +1624,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 					}
 				}
 			}
-			if mlLocal.Financial != nil || mlLocal.Sentiment != nil || mlLocal.EngineD != nil {
+			if mlLocal.Financial != nil || mlLocal.Sentiment != nil || mlLocal.EngineD != nil || mlLocal.MLError != "" {
 				mlData = mlLocal
 			}
 		}()
