@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1734,6 +1735,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		}
 
 		var epsSeq []float64
+		var yearLabels []string
 		if extRIM != nil && len(extRIM.EPSForecast) > 0 {
 			years := make([]string, 0, len(extRIM.EPSForecast))
 			for y := range extRIM.EPSForecast {
@@ -1749,6 +1751,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 			for _, y := range years {
 				if v, ok := extRIM.EPSForecast[y]; ok && v > 0 {
 					epsSeq = append(epsSeq, v)
+					yearLabels = append(yearLabels, y)
 				}
 			}
 		}
@@ -1790,6 +1793,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 			}
 			if trailingEPS > 0 {
 				epsSeq = append(epsSeq, trailingEPS)
+				yearLabels = append(yearLabels, fmt.Sprintf("%d", time.Now().Year()))
 			}
 		}
 		// 如果预测年份不足6年，用最后一年增长率外推（默认增长率 10% -> 5%）
@@ -1805,6 +1809,16 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 			} else {
 				epsSeq = append(epsSeq, 0)
 			}
+			// 外推年份
+			if len(yearLabels) > 0 {
+				if lastY, err := strconv.Atoi(yearLabels[len(yearLabels)-1]); err == nil {
+					yearLabels = append(yearLabels, fmt.Sprintf("%d", lastY+1))
+				} else {
+					yearLabels = append(yearLabels, fmt.Sprintf("%d", time.Now().Year()+len(yearLabels)))
+				}
+			} else {
+				yearLabels = append(yearLabels, fmt.Sprintf("%d", time.Now().Year()+len(yearLabels)))
+			}
 		}
 
 		ke := rimData.Rf + rimData.Beta*rimData.RmRf
@@ -1819,7 +1833,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 				BPS0:         bps0,
 				KE:           ke,
 				GTerminal:    gTerminal,
-				Forecast:     analyzer.RIMForecast{EPS: epsSeq},
+				Forecast:     analyzer.RIMForecast{EPS: epsSeq, Years: yearLabels},
 				CurrentPrice: price,
 			}
 			rimData.Params = params

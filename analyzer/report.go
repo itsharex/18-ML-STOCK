@@ -782,7 +782,11 @@ func writeModule7(b *strings.Builder, steps []StepResult, latest string, quote *
 				if i > 0 {
 					epsLine += ", "
 				}
-				epsLine += fmt.Sprintf("第%d年 %.2f", d.Year, d.EPS)
+				yearLabel := fmt.Sprintf("第%d年", d.Year)
+				if d.CalendarYear > 0 {
+					yearLabel = fmt.Sprintf("%d年", d.CalendarYear)
+				}
+				epsLine += fmt.Sprintf("%s %.2f", yearLabel, d.EPS)
 			}
 			b.WriteString(fmt.Sprintf("| <span style=\"white-space:nowrap;\">**预测期 EPS**</span> | -&nbsp; | %s | 机构一致预期 |\n", epsLine))
 		}
@@ -822,7 +826,11 @@ func writeModule7(b *strings.Builder, steps []StepResult, latest string, quote *
 		}
 		for _, d := range rim.Result.Details {
 			runningBPS = runningBPS + d.EPS - d.DPS
-			b.WriteString(fmt.Sprintf("| 第%d年 | %.2f | %.2f | %.2f | %.4f | %.4f | %.4f |\n", d.Year, d.EPS, d.DPS, runningBPS, d.RE, d.Discount, d.PVRE))
+			yearLabel := fmt.Sprintf("第%d年", d.Year)
+			if d.CalendarYear > 0 {
+				yearLabel = fmt.Sprintf("%d年", d.CalendarYear)
+			}
+			b.WriteString(fmt.Sprintf("| %s | %.2f | %.2f | %.2f | %.4f | %.4f | %.4f |\n", yearLabel, d.EPS, d.DPS, runningBPS, d.RE, d.Discount, d.PVRE))
 		}
 		b.WriteString(fmt.Sprintf("| **RE现值之和** | - | - | - | - | - | **%.4f** |\n", rim.Result.SumPVRE))
 		b.WriteString(fmt.Sprintf("| **持续价值 CV** | - | - | - | %.4f | - | **%.4f** |\n", rim.Result.CV, rim.Result.PVCV))

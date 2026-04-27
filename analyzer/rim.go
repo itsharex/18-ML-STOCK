@@ -3,12 +3,14 @@ package analyzer
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
 // RIMForecast 预测期数据
 type RIMForecast struct {
-	EPS []float64 // 各期 EPS
-	DPS []float64 // 各期 DPS，长度不足时默认 0
+	EPS   []float64 // 各期 EPS
+	DPS   []float64 // 各期 DPS，长度不足时默认 0
+	Years []string  // 各期对应的实际年份（如 "2026", "2027"），用于报告显示
 }
 
 // RIMParams 多期 RIM 输入参数
@@ -22,13 +24,14 @@ type RIMParams struct {
 
 // RIMYearDetail 单年度计算明细
 type RIMYearDetail struct {
-	Year     int
-	EPS      float64
-	DPS      float64
-	BPS      float64
-	RE       float64
-	Discount float64
-	PVRE     float64
+	Year         int
+	CalendarYear int     // 实际日历年（如 2026），用于报告显示
+	EPS          float64
+	DPS          float64
+	BPS          float64
+	RE           float64
+	Discount     float64
+	PVRE         float64
 }
 
 // RIMScenario 单情景结果
@@ -77,14 +80,22 @@ func CalculateMultiPeriodRIM(p RIMParams) *RIMResult {
 		pvre := re / discount
 		sumPVRE += pvre
 
+		calendarYear := i + 1
+		if i < len(p.Forecast.Years) {
+			if y, err := strconv.Atoi(p.Forecast.Years[i]); err == nil {
+				calendarYear = y
+			}
+		}
+
 		details = append(details, RIMYearDetail{
-			Year:     i + 1,
-			EPS:      eps,
-			DPS:      dps,
-			BPS:      bps,
-			RE:       re,
-			Discount: discount,
-			PVRE:     pvre,
+			Year:         i + 1,
+			CalendarYear: calendarYear,
+			EPS:          eps,
+			DPS:          dps,
+			BPS:          bps,
+			RE:           re,
+			Discount:     discount,
+			PVRE:         pvre,
 		})
 
 		bps = bps + eps - dps
