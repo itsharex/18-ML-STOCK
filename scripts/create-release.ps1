@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $Repo = "liusaipu/18-ML-STOCK"
 $BinDir = "build\bin"
-$ZipFile = "stock-analyzer_windows_amd64_v1.3.5.zip"
+$ZipFile = "stockfinlens-windows-amd64-v1.3.5.zip"
 $NotesFile = "RELEASE_NOTES_v1.3.5.md"
 
 # 检查文件存在
@@ -38,13 +38,13 @@ if (-not (Test-Path "$BinDir\$ZipFile")) {
 Write-Host "🚀 创建 GitHub Release $Tag..." -ForegroundColor Cyan
 
 $ReleaseNotes = @"
-Stock Analyzer $Tag 发布
+StockFinLens $Tag 发布
 
 ## 快速开始
-1. 下载 stock-analyzer_windows_amd64_v1.3.5.zip
+1. 下载 stockfinlens-windows-amd64-v1.3.5.zip
 2. 解压到任意目录
 3. 安装 Python 依赖: pip install onnxruntime scikit-learn numpy
-4. 运行 stock-analyzer.exe
+4. 运行 stockfinlens.exe
 
 ## 详细说明
 详见 RELEASE_NOTES_v1.3.5.md
@@ -60,7 +60,7 @@ git push origin $Tag 2>$null
 
 gh release create $Tag `
     --repo $Repo `
-    --title "Stock Analyzer $Tag" `
+    --title "StockFinLens $Tag" `
     --notes $ReleaseNotes `
     "$BinDir\$ZipFile#Windows 版本 (v1.3.5)" `
     "$BinDir\$NotesFile#发布说明"

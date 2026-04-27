@@ -2484,7 +2484,7 @@ func (a *App) UpdateIndustryDatabase() (*downloader.IndustryUpdateResult, error)
 // SendNotification 发送系统通知（Windows Toast）
 func (a *App) SendNotification(title, content string) error {
 	notification := toast.Notification{
-		AppID: "Stock Analyzer",
+		AppID: "StockFinLens",
 		Title: title,
 		Body:  content,
 	}

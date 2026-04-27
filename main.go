@@ -32,7 +32,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Stock Analyzer",
+		Title:  "StockFinLens",
 		Width:  1280,
 		Height: 800,
 		AssetServer: &assetserver.Options{

@@ -206,7 +206,7 @@ function Clean-Project {
 
 # 主逻辑
 Write-Host "================================" -ForegroundColor Blue
-Write-Host "  Stock Analyzer Windows Build" -ForegroundColor Blue
+Write-Host "  StockFinLens Windows Build" -ForegroundColor Blue
 Write-Host "================================" -ForegroundColor Blue
 
 switch ($Command) {

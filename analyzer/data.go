@@ -17,7 +17,7 @@ type FinancialData struct {
 	Extras          map[string]float64 // 非财务风险爬虫数据（股权质押、问询函、减持等）
 }
 
-// LoadFinancialData 从 stock-analyzer 存储目录加载某股票的财务报表 JSON
+// LoadFinancialData 从 StockFinLens 存储目录加载某股票的财务报表 JSON
 func LoadFinancialData(baseDir, symbol string) (*FinancialData, error) {
 	stockDir := filepath.Join(baseDir, "data", symbol)
 

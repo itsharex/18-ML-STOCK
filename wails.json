@@ -13,7 +13,7 @@
     "dev:serverUrl": "http://localhost:5173"
   },
   "author": {
-    "name": "Stock Analyzer",
+    "name": "StockFinLens",
     "email": "dev@example.com"
   },
   "info": {

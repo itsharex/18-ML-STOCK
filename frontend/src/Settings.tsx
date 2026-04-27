@@ -25,7 +25,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   analysisNotification: true,
 }
 
-const SETTINGS_KEY = 'stock-analyzer-settings-v1'
+const SETTINGS_KEY = 'stockfinlens-settings-v1'
 
 export function loadSettings(): AppSettings {
   try {
