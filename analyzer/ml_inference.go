@@ -125,7 +125,7 @@ func mlInferenceScriptPath() string {
 			}
 		}
 		// macOS .app bundle: ml_models 在 Contents/Resources 内部
-		resourcesDir := filepath.Join(exeDir, "..", "..", "Resources")
+		resourcesDir := filepath.Join(exeDir, "..", "Resources")
 		p = filepath.Join(resourcesDir, "ml_models", "inference.py")
 		if _, err := os.Stat(p); err == nil {
 			return p
@@ -168,7 +168,7 @@ func resolveMLPythonExecutable() string {
 			}
 		}
 		// macOS .app bundle: 检查 Contents/Resources 下的 .venv
-		resourcesDir := filepath.Join(exeDir, "..", "..", "Resources")
+		resourcesDir := filepath.Join(exeDir, "..", "Resources")
 		venvPython := filepath.Join(resourcesDir, ".venv", "bin", "python3")
 		if _, err := os.Stat(venvPython); err == nil {
 			return venvPython
