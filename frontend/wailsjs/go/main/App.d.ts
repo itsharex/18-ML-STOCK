@@ -36,6 +36,12 @@ export function ExportReportImage(arg1:string,arg2:string):Promise<void>;
 
 export function ExportReportPDF(arg1:string,arg2:string):Promise<void>;
 
+export function FetchHotConceptConstituents(arg1:string):Promise<Array<downloader.ConceptConstituent>>;
+
+export function FetchHotConceptHistory(arg1:number):Promise<Array<downloader.HotConceptHistoryItem>>;
+
+export function FetchHotConcepts(arg1:number):Promise<downloader.HotConceptBoard>;
+
 export function FetchMissingActivity(arg1:Array<string>):Promise<main.FetchMissingActivityResult>;
 
 export function GetComparables(arg1:string):Promise<Array<string>>;
@@ -64,9 +70,13 @@ export function GetStockDataHistory(arg1:string):Promise<Array<main.HistoryMeta>
 
 export function GetStockKlines(arg1:string):Promise<Array<downloader.KlineData>>;
 
+export function GetStockMoneyflow(arg1:string,arg2:number):Promise<main.StockMoneyflowResult>;
+
 export function GetStockProfile(arg1:string):Promise<main.StockProfile>;
 
 export function GetStockQuote(arg1:string):Promise<downloader.StockQuote>;
+
+export function GetTushareConfig():Promise<main.TushareConfig>;
 
 export function GetWatchlist():Promise<Array<main.WatchlistItem>>;
 
@@ -86,6 +96,8 @@ export function LoadAnalysisSnapshot(arg1:string):Promise<analyzer.AnalysisRepor
 
 export function MarkPythonDepsChecked():Promise<void>;
 
+export function QuickAnalyzeStock(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.QuickAnalysis>;
+
 export function RefreshIndustryBaselines():Promise<Record<string, analyzer.IndustryBaseline>>;
 
 export function RefreshStockProfile(arg1:string):Promise<main.StockProfile>;
@@ -102,6 +114,8 @@ export function ReorderWatchlist(arg1:Array<string>):Promise<void>;
 
 export function SaveDefaultPolicyLibrary():Promise<void>;
 
+export function SaveTushareConfig(arg1:main.TushareConfig):Promise<void>;
+
 export function SearchStocks(arg1:string):Promise<Array<main.StockInfo>>;
 
 export function SendNotification(arg1:string,arg2:string):Promise<void>;
@@ -111,3 +125,5 @@ export function UpdateIndustryDatabase():Promise<downloader.IndustryUpdateResult
 export function UpdateModule4Only(arg1:string):Promise<analyzer.AnalysisReport>;
 
 export function UpdatePolicyLibrary():Promise<downloader.PolicyUpdateResult>;
+
+export function VerifyTushareToken(arg1:string):Promise<main.TushareVerifyResult>;

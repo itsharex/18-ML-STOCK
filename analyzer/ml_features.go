@@ -162,7 +162,7 @@ func BuildMLEngineAInputFromKlines(klines []MLKlineData, sentiment *SentimentDat
 	for i := range textSeq {
 		feat := make([]float64, 32)
 		if sentiment != nil && sentiment.HasData {
-			feat[0] = sentiment.Score / 100.0           // 情感分数归一化
+			feat[0] = sentiment.Score / 100.0              // 情感分数归一化
 			feat[1] = float64(sentiment.HeatIndex) / 100.0 // 热度
 			feat[2] = float64(len(sentiment.PositiveWords)) / 10.0
 			feat[3] = float64(len(sentiment.NegativeWords)) / 10.0
@@ -234,12 +234,12 @@ func BuildMLEngineDInput(data *FinancialData) []float64 {
 	mscore := -safeDivide(accruals, totalAssets) * 5
 
 	// 2. Z-Score 简化版
-	workingCapital := data.GetValueOrZero(data.BalanceSheet, "流动资产合计", year) - 
+	workingCapital := data.GetValueOrZero(data.BalanceSheet, "流动资产合计", year) -
 		data.GetValueOrZero(data.BalanceSheet, "流动负债合计", year)
 	x1 := safeDivide(workingCapital, totalAssets)
 	retainedEarnings := data.GetValueOrZero(data.BalanceSheet, "未分配利润", year)
 	x2 := safeDivide(retainedEarnings, totalAssets)
-	ebit := data.GetValueOrZero(data.IncomeStatement, "营业利润", year) + 
+	ebit := data.GetValueOrZero(data.IncomeStatement, "营业利润", year) +
 		data.GetValueOrZero(data.IncomeStatement, "财务费用", year)
 	x3 := safeDivide(ebit, totalAssets)
 	x4 := safeDivide(equity, totalLiabilities)

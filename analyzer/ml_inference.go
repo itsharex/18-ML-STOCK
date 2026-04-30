@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
 )
 
 // MLSentimentPrediction A 舆情+量价高频预警结果
@@ -32,11 +31,11 @@ type MLFinancialPrediction struct {
 
 // MLDRiskPrediction Engine-D 风险预警结果
 type MLDRiskPrediction struct {
-	RiskLabel    int      `json:"risk_label"`
-	RiskProb     float64  `json:"risk_prob"`
-	RiskLevel    string   `json:"risk_level"`
-	TopFactors   []string `json:"top_factors"`
-	ModelLoaded  bool     `json:"model_loaded"`
+	RiskLabel   int      `json:"risk_label"`
+	RiskProb    float64  `json:"risk_prob"`
+	RiskLevel   string   `json:"risk_level"`
+	TopFactors  []string `json:"top_factors"`
+	ModelLoaded bool     `json:"model_loaded"`
 }
 
 // findProjectRoot 从指定目录向上查找项目根目录（通过 ml_models/inference.py 标记）
@@ -156,7 +155,7 @@ func resolveMLPythonExecutable() string {
 			return venvPythonWin
 		}
 	}
-	
+
 	// macOS .app bundle: 检查 .app 同级目录下的 .venv
 	if exe, err := os.Executable(); err == nil {
 		exe, _ = filepath.EvalSymlinks(exe)
@@ -174,7 +173,7 @@ func resolveMLPythonExecutable() string {
 			return venvPython
 		}
 	}
-	
+
 	// Windows: 尝试多个可能的 Python 路径
 	if runtime.GOOS == "windows" {
 		// 常见 Python 安装路径
@@ -192,13 +191,13 @@ func resolveMLPythonExecutable() string {
 			`C:\Program Files\Python310\python.exe`,
 			`C:\Program Files\Python39\python.exe`,
 		}
-		
+
 		for _, p := range pythonPaths {
 			if _, err := os.Stat(p); err == nil {
 				return p
 			}
 		}
-		
+
 		// 尝试使用 where 命令查找
 		if out, err := exec.Command("where", "python").Output(); err == nil {
 			paths := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -206,7 +205,7 @@ func resolveMLPythonExecutable() string {
 				return strings.TrimSpace(paths[0])
 			}
 		}
-		
+
 		// 最后 fallback 到命令名
 		candidates := []string{"python", "python3", "py"}
 		for _, py := range candidates {
@@ -223,13 +222,13 @@ func resolveMLPythonExecutable() string {
 func callMLInference(engine string, payload map[string]any) (map[string]any, error) {
 	script := mlInferenceScriptPath()
 	python := resolveMLPythonExecutable()
-	
+
 	fmt.Printf("[ML] Engine %s: python=%s, script=%s\n", engine, python, script)
-	
+
 	if _, err := os.Stat(script); os.IsNotExist(err) {
 		return nil, fmt.Errorf("推理脚本不存在: %s", script)
 	}
-	
+
 	// 检查 Python 是否可执行
 	if runtime.GOOS == "windows" {
 		// Windows 上检查 python 命令是否在 PATH 中
@@ -260,7 +259,7 @@ func callMLInference(engine string, payload map[string]any) (map[string]any, err
 	fmt.Printf("[ML] Executing: %s %s\n", python, script)
 	cmd := exec.Command(python, script)
 	cmd.Env = append(os.Environ(), "TQDM_DISABLE=1", "PYTHONUNBUFFERED=1")
-	
+
 	// Windows: 隐藏 CMD 窗口
 	setHideWindow(cmd)
 	stdin, err := cmd.StdinPipe()

@@ -25,7 +25,7 @@ type RIMParams struct {
 // RIMYearDetail 单年度计算明细
 type RIMYearDetail struct {
 	Year         int
-	CalendarYear int     // 实际日历年（如 2026），用于报告显示
+	CalendarYear int // 实际日历年（如 2026），用于报告显示
 	EPS          float64
 	DPS          float64
 	BPS          float64
@@ -54,8 +54,6 @@ type RIMResult struct {
 	Baseline    RIMScenario
 	Optimistic  RIMScenario
 }
-
-
 
 // CalculateMultiPeriodRIM 执行多期剩余收益模型计算
 func CalculateMultiPeriodRIM(p RIMParams) *RIMResult {

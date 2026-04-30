@@ -8,15 +8,14 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
 )
 
 // RiskCrawlerData 非财务风险爬虫结果
 type RiskCrawlerData struct {
-	PledgeRatio        *float64 `json:"pledge_ratio"`
-	InquiryCount1Y     *int     `json:"inquiry_count_1y"`
-	ReductionCount1Y   *int     `json:"reduction_count_1y"`
-	Error              string   `json:"error"`
+	PledgeRatio      *float64 `json:"pledge_ratio"`
+	InquiryCount1Y   *int     `json:"inquiry_count_1y"`
+	ReductionCount1Y *int     `json:"reduction_count_1y"`
+	Error            string   `json:"error"`
 }
 
 func resolveRiskCrawlerPython() string {
@@ -32,7 +31,7 @@ func resolveRiskCrawlerPython() string {
 			return venvPythonWin
 		}
 	}
-	
+
 	_, b, _, _ := runtime.Caller(0)
 	base := filepath.Dir(b)
 	root := findProjectRootByMarker(base, filepath.Join("ml_models", "risk_crawler.py"))
@@ -82,7 +81,7 @@ func riskCrawlerScriptPath() string {
 			return p
 		}
 	}
-	
+
 	_, b, _, _ := runtime.Caller(0)
 	base := filepath.Dir(b)
 	root := findProjectRootByMarker(base, filepath.Join("ml_models", "risk_crawler.py"))
@@ -108,7 +107,7 @@ func FetchRiskCrawlerData(symbol string) (*RiskCrawlerData, error) {
 	python := resolveRiskCrawlerPython()
 	cmd := exec.Command(python, script)
 	cmd.Env = append(os.Environ(), "TQDM_DISABLE=1", "PYTHONUNBUFFERED=1")
-	
+
 	// Windows: 隐藏 CMD 窗口
 	setHideWindow(cmd)
 	stdin, err := cmd.StdinPipe()

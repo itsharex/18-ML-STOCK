@@ -19,9 +19,9 @@ func TestAnalyze603501(t *testing.T) {
 	}
 
 	files := map[string]string{
-		"balance_sheet.json":   "603501_debt_year.csv",
+		"balance_sheet.json":    "603501_debt_year.csv",
 		"income_statement.json": "603501_benefit_year.csv",
-		"cash_flow.json":       "603501_cash_year.csv",
+		"cash_flow.json":        "603501_cash_year.csv",
 	}
 
 	for outName, csvName := range files {

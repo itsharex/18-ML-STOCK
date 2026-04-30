@@ -19,22 +19,22 @@ import (
 	analyzer "github.com/liusaipu/stockfinlens/analyzer"
 	"github.com/liusaipu/stockfinlens/downloader"
 
+	toast "git.sr.ht/~jackmordaunt/go-toast/v2"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/xuri/excelize/v2"
-	toast "git.sr.ht/~jackmordaunt/go-toast/v2"
 )
 
 // debugLog 直接写入日志文件，确保日志被记录
 func debugLog(format string, v ...interface{}) {
 	msg := fmt.Sprintf(format, v...)
-	
+
 	// 获取可执行文件所在目录
 	exePath, err := os.Executable()
 	if err != nil {
 		return
 	}
 	exeDir := filepath.Dir(exePath)
-	
+
 	// 写入日志文件
 	logFile := filepath.Join(exeDir, "debug.log")
 	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
@@ -42,10 +42,10 @@ func debugLog(format string, v ...interface{}) {
 		return
 	}
 	defer f.Close()
-	
+
 	timestamp := time.Now().Format("2006-01-02 15:04:05.000")
 	f.WriteString(fmt.Sprintf("[%s] %s\n", timestamp, msg))
-	
+
 	// 同时输出到控制台
 	fmt.Printf("[%s] %s\n", timestamp, msg)
 }
@@ -57,6 +57,7 @@ type App struct {
 	stocks        []StockInfo // 内存中的股票代码库
 	analysisMu    sync.Mutex
 	analysisLocks map[string]*sync.Mutex
+	dataRouter    *downloader.DataRouter // 数据源路由
 }
 
 // StockInfo 股票基础信息
@@ -84,10 +85,11 @@ type ImportResult struct {
 
 // DownloadResult 网络下载结果
 type DownloadResult struct {
-	Success    bool                       `json:"success"`
-	Message    string                     `json:"message"`
-	Years      []string                   `json:"years"`
+	Success    bool                          `json:"success"`
+	Message    string                        `json:"message"`
+	Years      []string                      `json:"years"`
 	Validation []downloader.ValidationResult `json:"validation"`
+	SourceName string                        `json:"sourceName"` // 数据来源（Tushare / 东方财富 / 腾讯财经）
 }
 
 // NewApp creates a new App application struct
@@ -111,6 +113,9 @@ func (a *App) startup(ctx context.Context) {
 	if err := a.loadStockDB(); err != nil {
 		fmt.Printf("加载股票代码库失败: %v\n", err)
 	}
+
+	// 初始化数据源路由
+	a.reloadDataRouter()
 
 	// 初始化行业均值数据库
 	if err := analyzer.InitIndustryDatabase(a.storage.DataDir()); err != nil {
@@ -156,13 +161,13 @@ func fallbackIndustryScriptPath() string {
 func (a *App) shouldStartBackgroundIndustryUpdate() bool {
 	dataDir := a.storage.DataDir()
 	taskPath := filepath.Join(dataDir, "industry_task.json")
-	
+
 	// 如果任务文件不存在，直接启动
 	data, err := os.ReadFile(taskPath)
 	if err != nil {
 		return true
 	}
-	
+
 	var task struct {
 		Status    string `json:"status"`
 		UpdatedAt string `json:"updatedAt"`
@@ -170,12 +175,12 @@ func (a *App) shouldStartBackgroundIndustryUpdate() bool {
 	if err := json.Unmarshal(data, &task); err != nil {
 		return true
 	}
-	
+
 	// 如果正在运行，不要重复启动
 	if task.Status == "running" {
 		return false
 	}
-	
+
 	// 如果已完成，检查是否超过 7 天
 	if task.Status == "completed" && task.UpdatedAt != "" {
 		t, err := time.Parse("2006-01-02T15:04:05", task.UpdatedAt)
@@ -183,7 +188,7 @@ func (a *App) shouldStartBackgroundIndustryUpdate() bool {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -195,30 +200,30 @@ func (a *App) startBackgroundIndustryUpdate() {
 	if !a.shouldStartBackgroundIndustryUpdate() {
 		return
 	}
-	
+
 	script := fallbackIndustryScriptPath()
 	if script == "" {
 		fmt.Println("未找到 fetch_all_industry_data.py，跳过后台行业数据采集")
 		return
 	}
-	
+
 	python := "python"
 	if _, err := exec.LookPath("python"); err != nil {
 		python = "python3"
 	}
-	
+
 	fmt.Printf("启动后台行业数据采集: %s\n", script)
 	cmd := exec.Command(python, script, a.storage.DataDir())
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("后台行业数据采集失败: %v, output: %s\n", err, string(output))
 		return
 	}
-	
+
 	fmt.Printf("后台行业数据采集完成: %s\n", string(output))
-	
+
 	// 完成后重新加载行业数据库
 	if reloadErr := analyzer.ReloadIndustryDatabase(a.storage.DataDir()); reloadErr != nil {
 		fmt.Printf("后台行业数据热重载失败: %v\n", reloadErr)
@@ -507,17 +512,30 @@ func (a *App) GetWatchlistActivity() ([]WatchlistActivitySummary, error) {
 		if cached, err := a.storage.LoadActivityCache(item.Code); err == nil && cached != nil {
 			activity = cached
 		} else {
-			klines, err := downloader.FetchStockKlines(market, pureCode, 60)
-			if err != nil || len(klines) < 20 {
-				fmt.Printf("[GetWatchlistActivity] %s klines err=%v len=%d\n", item.Code, err, len(klines))
+			var klines []downloader.KlineData
+			var quote *downloader.StockQuote
+			var kErr, qErr error
+			if a.dataRouter != nil {
+				klines, kErr = a.dataRouter.FetchKlines(market, pureCode, 60)
+				quote, qErr = a.dataRouter.FetchQuote(market, pureCode)
+			} else {
+				klines, kErr = downloader.FetchStockKlines(market, pureCode, 60)
+				quote, qErr = downloader.FetchStockQuote(market, pureCode)
+			}
+			if kErr != nil || len(klines) < 20 {
+				fmt.Printf("[GetWatchlistActivity] %s klines err=%v len=%d\n", item.Code, kErr, len(klines))
 				continue
 			}
-			quote, err := downloader.FetchStockQuote(market, pureCode)
-			if err != nil || quote == nil || quote.CirculatingMarketCap <= 0 {
-				fmt.Printf("[GetWatchlistActivity] %s quote err=%v cap=%.0f\n", item.Code, err, quote.CirculatingMarketCap)
+			if qErr != nil || quote == nil || quote.CirculatingMarketCap <= 0 {
+				fmt.Printf("[GetWatchlistActivity] %s quote err=%v cap=%.0f\n", item.Code, qErr, quote.CirculatingMarketCap)
 				continue
 			}
-			profile, _ := downloader.FetchStockProfile(market, pureCode)
+			var profile *downloader.StockProfile
+			if a.dataRouter != nil {
+				profile, _ = a.dataRouter.FetchProfile(market, pureCode)
+			} else {
+				profile, _ = downloader.FetchStockProfile(market, pureCode)
+			}
 			industry := ""
 			if profile != nil {
 				industry = profile.Industry
@@ -607,23 +625,36 @@ func (a *App) FetchMissingActivity(codes []string) (*FetchMissingActivityResult,
 				}
 			}
 
-			klines, err := downloader.FetchStockKlines(market, pureCode, 60)
-			if err != nil || len(klines) < 20 {
-				fmt.Printf("[FetchMissingActivity] %s klines err=%v len=%d\n", c, err, len(klines))
+			var klines []downloader.KlineData
+			var quote *downloader.StockQuote
+			var kErr, qErr error
+			if a.dataRouter != nil {
+				klines, kErr = a.dataRouter.FetchKlines(market, pureCode, 60)
+				quote, qErr = a.dataRouter.FetchQuote(market, pureCode)
+			} else {
+				klines, kErr = downloader.FetchStockKlines(market, pureCode, 60)
+				quote, qErr = downloader.FetchStockQuote(market, pureCode)
+			}
+			if kErr != nil || len(klines) < 20 {
+				fmt.Printf("[FetchMissingActivity] %s klines err=%v len=%d\n", c, kErr, len(klines))
 				mu.Lock()
 				failedCodes = append(failedCodes, c)
 				mu.Unlock()
 				return
 			}
-			quote, err := downloader.FetchStockQuote(market, pureCode)
-			if err != nil || quote == nil || quote.CirculatingMarketCap <= 0 {
-				fmt.Printf("[FetchMissingActivity] %s quote err=%v cap=%.0f\n", c, err, quote.CirculatingMarketCap)
+			if qErr != nil || quote == nil || quote.CirculatingMarketCap <= 0 {
+				fmt.Printf("[FetchMissingActivity] %s quote err=%v cap=%.0f\n", c, qErr, quote.CirculatingMarketCap)
 				mu.Lock()
 				failedCodes = append(failedCodes, c)
 				mu.Unlock()
 				return
 			}
-			profile, _ := downloader.FetchStockProfile(market, pureCode)
+			var profile *downloader.StockProfile
+			if a.dataRouter != nil {
+				profile, _ = a.dataRouter.FetchProfile(market, pureCode)
+			} else {
+				profile, _ = downloader.FetchStockProfile(market, pureCode)
+			}
 			industry := ""
 			if profile != nil {
 				industry = profile.Industry
@@ -932,10 +963,31 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 	code := parts[0]
 	market := strings.ToUpper(parts[1])
 
-	// 下载数据
-	data, err := downloader.DownloadFinancialReports(market, code, maxYears)
-	if err != nil {
-		return nil, fmt.Errorf("下载财报失败: %w", err)
+	var data *downloader.FinancialReportData
+	var err error
+	var sourceName string
+
+	// 1. 优先尝试 DataRouter（Tushare）
+	if a.dataRouter != nil && market != "HK" {
+		tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
+		if tErr == nil && tfd != nil {
+			data = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
+			if data != nil && len(data.Years) > 0 {
+				fmt.Printf("[DownloadReports] %s financial data from Tushare, years=%d\n", symbol, len(data.Years))
+				sourceName = "Tushare"
+			} else {
+				data = nil
+			}
+		}
+	}
+
+	// 2. Fallback 到原有下载链
+	if data == nil {
+		data, err = downloader.DownloadFinancialReports(market, code, maxYears)
+		if err != nil {
+			return nil, fmt.Errorf("下载财报失败: %w", err)
+		}
+		sourceName = "东方财富"
 	}
 
 	// 保存到本地
@@ -954,7 +1006,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 	_ = a.storage.ArchiveStockData(symbol, HistoryMeta{
 		Timestamp:  time.Now().Format("20060102_150405"),
 		Source:     "network_download",
-		SourceName: "东方财富",
+		SourceName: sourceName,
 		Years:      data.Years,
 	})
 
@@ -963,6 +1015,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 		Message:    fmt.Sprintf("成功下载 %d 年的年报数据", len(data.Years)),
 		Years:      data.Years,
 		Validation: validation,
+		SourceName: sourceName,
 	}, nil
 }
 
@@ -1013,11 +1066,26 @@ func (a *App) DownloadComparableReports(symbol string) (*DownloadResult, error) 
 		}
 		code := parts[0]
 		market := strings.ToUpper(parts[1])
-		data, err := downloader.DownloadFinancialReports(market, code)
-		if err != nil {
-			fmt.Printf("[Comparable] download failed for %s: %v\n", comp, err)
-			failed = append(failed, comp)
-			continue
+		var data *downloader.FinancialReportData
+		// 优先尝试 DataRouter
+		if a.dataRouter != nil && market != "HK" {
+			tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
+			if tErr == nil && tfd != nil {
+				data = a.dataRouter.ConvertToFinancialReportData(tfd, comp)
+				if data == nil || len(data.Years) == 0 {
+					data = nil
+				}
+			}
+		}
+		// Fallback
+		if data == nil {
+			var dErr error
+			data, dErr = downloader.DownloadFinancialReports(market, code)
+			if dErr != nil {
+				fmt.Printf("[Comparable] download failed for %s: %v\n", comp, dErr)
+				failed = append(failed, comp)
+				continue
+			}
 		}
 		dir, err := a.storage.EnsureComparableDataDir(comp)
 		if err != nil {
@@ -1210,7 +1278,13 @@ func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
 	}
 	code := parts[0]
 	market := strings.ToUpper(parts[1])
-	klist, err := downloader.FetchStockKlines(market, code, 375)
+	var klist []downloader.KlineData
+	var err error
+	if a.dataRouter != nil {
+		klist, err = a.dataRouter.FetchKlines(market, code, 375)
+	} else {
+		klist, err = downloader.FetchStockKlines(market, code, 375)
+	}
 	if err != nil {
 		debugLog("[GetStockKlines] %s FetchStockKlines error: %v", symbol, err)
 		return nil, err
@@ -1251,11 +1325,45 @@ func (a *App) GetStockQuote(symbol string) (*downloader.StockQuote, error) {
 	code := parts[0]
 	market := strings.ToUpper(parts[1])
 
-	// 从网络获取
-	quote, err := downloader.FetchStockQuote(market, code)
+	// 从网络获取（通过数据源路由）
+	var quote *downloader.StockQuote
+	if a.dataRouter != nil {
+		quote, err = a.dataRouter.FetchQuote(market, code)
+	} else {
+		quote, err = downloader.FetchStockQuote(market, code)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("获取行情失败: %w", err)
 	}
+
+	// 如果启用了 Tushare 每日指标，用高质量数据补充/覆盖 PE/PB/市值/换手率等
+	if a.dataRouter != nil && a.dataRouter.IsUseForQuote() {
+		if metrics, mErr := a.dataRouter.FetchDailyMetrics(market, code, ""); mErr == nil && metrics != nil {
+			if metrics.PE > 0 {
+				quote.PE = metrics.PE
+			}
+			if metrics.PB > 0 {
+				quote.PB = metrics.PB
+			}
+			if metrics.TurnoverRate > 0 {
+				quote.TurnoverRate = metrics.TurnoverRate
+			}
+			if metrics.VolumeRatio > 0 {
+				quote.VolumeRatio = metrics.VolumeRatio
+			}
+			if metrics.CirculatingMarketCap > 0 {
+				quote.CirculatingMarketCap = metrics.CirculatingMarketCap
+			}
+			if metrics.MarketCap > 0 {
+				quote.MarketCap = metrics.MarketCap
+			}
+			if metrics.DividendYield > 0 {
+				quote.DividendYield = metrics.DividendYield
+			}
+			debugLog("[GetStockQuote] %s merged Tushare daily metrics (PE=%.2f PB=%.2f)", symbol, quote.PE, quote.PB)
+		}
+	}
+
 	debugLog("[GetStockQuote] %s quote={CurrentPrice:%.2f CirculatingMarketCap:%.0f MarketCap:%.0f}", symbol, quote.CurrentPrice, quote.CirculatingMarketCap, quote.MarketCap)
 	_ = a.storage.SaveStockQuote(symbol, quote)
 	a.fillShareholderReturnRate(symbol, quote)
@@ -1390,12 +1498,13 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 	}
 	compAnalysis, _ := analyzer.BuildComparableAnalysis(a.storage.DataDir(), comparables, nameMap)
 
-	// 并发获取网络数据：实时行情、K线、舆情情绪
+	// 并发获取网络数据：实时行情、K线、舆情情绪、资金流向
 	var quoteData *analyzer.QuoteData
 	var klines []downloader.KlineData
 	var sentimentData *analyzer.SentimentData
+	var moneyflowData *analyzer.MoneyflowData
 	var wgNet sync.WaitGroup
-	wgNet.Add(3)
+	wgNet.Add(4)
 
 	go func() {
 		defer func() {
@@ -1435,7 +1544,16 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		}()
 		parts := strings.Split(symbol, ".")
 		if len(parts) == 2 {
-			if list, err := downloader.FetchStockKlines(strings.ToUpper(parts[1]), parts[0], 375); err == nil && len(list) >= 20 {
+			market := strings.ToUpper(parts[1])
+			code := parts[0]
+			var list []downloader.KlineData
+			var err error
+			if a.dataRouter != nil {
+				list, err = a.dataRouter.FetchKlines(market, code, 375)
+			} else {
+				list, err = downloader.FetchStockKlines(market, code, 375)
+			}
+			if err == nil && len(list) >= 20 {
 				klines = list
 			}
 		}
@@ -1499,6 +1617,61 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 				}
 			}
 		}
+
+	// 4. 获取资金流向
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				debugLog("[PANIC] moneyflow goroutine: %v", r)
+			}
+			wgNet.Done()
+		}()
+		if a.dataRouter != nil && a.dataRouter.IsUseForMoneyflow() {
+			parts := strings.Split(symbol, ".")
+			if len(parts) == 2 {
+				market := strings.ToUpper(parts[1])
+				code := parts[0]
+				end := time.Now().Format("20060102")
+				start := time.Now().AddDate(0, 0, -5).Format("20060102")
+				items, err := a.dataRouter.FetchMoneyflow(market, code, start, end)
+				if err == nil && len(items) > 0 {
+					mfItems := make([]analyzer.MoneyflowItem, 0, len(items))
+					for _, item := range items {
+						mfItems = append(mfItems, analyzer.MoneyflowItem{
+							Date:         item.TradeDate,
+							MainInflow:   item.BuyLgAmount + item.BuyElgAmount - item.SellLgAmount - item.SellElgAmount,
+							SmNetAmount:  item.BuySmAmount - item.SellSmAmount,
+							MdNetAmount:  item.BuyMdAmount - item.SellMdAmount,
+							LgNetAmount:  item.BuyLgAmount - item.SellLgAmount,
+							ElgNetAmount: item.BuyElgAmount - item.SellElgAmount,
+						})
+					}
+					moneyflowData = &analyzer.MoneyflowData{
+						HasData: true,
+						Items:   mfItems,
+					}
+					var totalMain float64
+					var inflowDays int
+					for _, item := range mfItems {
+						totalMain += item.MainInflow
+						if item.MainInflow > 0 {
+							inflowDays++
+						}
+					}
+					dayCount := len(mfItems)
+					if inflowDays == dayCount {
+						moneyflowData.Summary = fmt.Sprintf("近%d日主力持续流入，累计 %.2f 亿元", dayCount, totalMain/10000)
+					} else if inflowDays == 0 {
+						moneyflowData.Summary = fmt.Sprintf("近%d日主力持续流出，累计 %.2f 亿元", dayCount, totalMain/10000)
+					} else if totalMain > 0 {
+						moneyflowData.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流入 %.2f 亿元", dayCount, inflowDays, totalMain/10000)
+					} else {
+						moneyflowData.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流出 %.2f 亿元", dayCount, inflowDays, -totalMain/10000)
+					}
+				}
+			}
+		}
+	}()
 	}()
 
 	wgNet.Wait()
@@ -1852,7 +2025,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		}
 	}
 
-	report, err := analyzer.RunAnalysisWithAll(a.storage.DataDir(), symbol, compAnalysis, quoteData, sentimentData, policyData, technicalData, activityData, mlData, rimData)
+	report, err := analyzer.RunAnalysisWithAll(a.storage.DataDir(), symbol, compAnalysis, quoteData, sentimentData, policyData, technicalData, activityData, moneyflowData, mlData, rimData)
 	if err != nil {
 		return nil, err
 	}
@@ -1989,7 +2162,12 @@ func (a *App) GetStockProfile(symbol string) (*StockProfile, error) {
 	market := strings.ToUpper(parts[1])
 
 	// 从网络获取
-	dp, err := downloader.FetchStockProfile(market, code)
+	var dp *downloader.StockProfile
+	if a.dataRouter != nil {
+		dp, err = a.dataRouter.FetchProfile(market, code)
+	} else {
+		dp, err = downloader.FetchStockProfile(market, code)
+	}
 	if err != nil {
 		// 网络失败时回退到过期缓存（如果有）
 		if cached != nil && (cached.Industry != "" || cached.ListingDate != "" || cached.MarketCap > 0 || cached.PE > 0) {
@@ -2114,7 +2292,12 @@ func (a *App) GetStockConcepts(symbol string) (*downloader.StockConcepts, error)
 		changePercent = q.ChangePercent
 	}
 
-	concepts, err := downloader.FetchStockConcepts(market, code, changePercent)
+	var concepts *downloader.StockConcepts
+	if a.dataRouter != nil {
+		concepts, err = a.dataRouter.FetchConcepts(market, code, changePercent)
+	} else {
+		concepts, err = downloader.FetchStockConcepts(market, code, changePercent)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("获取概念数据失败: %w", err)
 	}
@@ -2495,9 +2678,9 @@ func (a *App) SendNotification(title, content string) error {
 func (a *App) GetIndustryDBMeta() map[string]interface{} {
 	version, updatedAt, count := analyzer.GetIndustryDBMeta()
 	return map[string]interface{}{
-		"version":    version,
-		"updatedAt":  updatedAt,
-		"count":      count,
+		"version":   version,
+		"updatedAt": updatedAt,
+		"count":     count,
 	}
 }
 
@@ -2521,6 +2704,37 @@ func (a *App) GetIndustryTaskStatus() map[string]interface{} {
 // GetIndustryMetrics 获取指定行业的均值指标
 func (a *App) GetIndustryMetrics(industry string) (*analyzer.IndustryMetrics, bool) {
 	return analyzer.GetIndustryMetrics(industry)
+}
+
+// ========== 热门概念/风口选票 ==========
+
+// FetchHotConcepts 获取当日热门概念排行（综合排序）
+// topN 为返回前 N 个概念，若 <=0 则返回全部
+func (a *App) FetchHotConcepts(topN int) (*downloader.HotConceptBoard, error) {
+	board, err := downloader.FetchHotConceptBoard(a.storage.DataDir(), topN)
+	if err != nil {
+		return nil, fmt.Errorf("获取热门概念失败: %w", err)
+	}
+	return board, nil
+}
+
+// FetchHotConceptHistory 获取最近 days 天的历史热点摘要
+// 返回每天的 Top 概念名称列表，用于前端"连续上榜"标记
+func (a *App) FetchHotConceptHistory(days int) ([]downloader.HotConceptHistoryItem, error) {
+	history, err := downloader.FetchHotConceptHistory(a.storage.DataDir(), days)
+	if err != nil {
+		return nil, fmt.Errorf("获取历史热点失败: %w", err)
+	}
+	return history, nil
+}
+
+// FetchHotConceptConstituents 获取指定概念板块的成分股列表
+func (a *App) FetchHotConceptConstituents(conceptCode string) ([]downloader.ConceptConstituent, error) {
+	cons, err := downloader.FetchConceptConstituents(conceptCode)
+	if err != nil {
+		return nil, fmt.Errorf("获取成分股失败: %w", err)
+	}
+	return cons, nil
 }
 
 func createZipFromDir(dst string, srcDir string) error {
@@ -2557,6 +2771,264 @@ func createZipFromDir(dst string, srcDir string) error {
 	})
 }
 
+// ========== 快速分析（热点成分股扫描用）==========
+
+// QuickAnalysis 快速分析结果（精简版，用于热点成分股快速扫描）
+type QuickAnalysis struct {
+	// 基础信息
+	Code   string `json:"code"`
+	Name   string `json:"name"`
+	Symbol string `json:"symbol"` // 带点格式，如 000001.SZ
+	Market string `json:"market"`
+
+	// 流动性（来自 Quote）
+	CurrentPrice  float64 `json:"current_price"`
+	ChangePercent float64 `json:"change_percent"`
+	TurnoverRate  float64 `json:"turnover_rate"`
+	VolumeRatio   float64 `json:"volume_ratio"`
+
+	// 资金流向（优先 Tushare moneyflow，否则近似估算）
+	HasMoneyflowData bool    `json:"has_moneyflow_data"` // 是否有真实资金流向数据
+	MainInflow       float64 `json:"main_inflow"`        // 主力净流入（大单+特大单），元
+	SmNetAmount      float64 `json:"sm_net_amount"`      // 小单净流入，元
+	MdNetAmount      float64 `json:"md_net_amount"`      // 中单净流入，元
+	LgNetAmount      float64 `json:"lg_net_amount"`      // 大单净流入，元
+	ElgNetAmount     float64 `json:"elg_net_amount"`     // 特大单净流入，元
+
+	// 基本面（来自 Profile）
+	Industry  string  `json:"industry"`
+	MarketCap float64 `json:"market_cap"`
+	PE        float64 `json:"pe"`
+	PB        float64 `json:"pb"`
+	EPS       float64 `json:"eps"`
+
+	// 舆情（来自 Sentiment）
+	SentimentScore    float64  `json:"sentiment_score"`
+	SentimentHeat     int      `json:"sentiment_heat"`
+	SentimentKeywords []string `json:"sentiment_keywords"`
+	HasSentimentData  bool     `json:"has_sentiment_data"`
+
+	// 风口关联（来自 Concepts）
+	Concepts     []string `json:"concepts"`
+	ConceptMatch []string `json:"concept_match"` // 与当前 Top 20 热点的交集
+
+	// 错误信息
+	Errors []string `json:"errors"`
+}
+
+// QuickAnalyzeStock 对单只股票执行快速分析（并行获取 Quote + Profile + Concepts + Sentiment）
+func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickAnalysis, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("存储未初始化")
+	}
+
+	// 构造 symbol
+	marketUpper := strings.ToUpper(market)
+	if marketUpper == "" {
+		marketUpper = inferMarketFromCodeQuick(code)
+	}
+	symbol := code + "." + marketUpper
+
+	result := &QuickAnalysis{
+		Code:   code,
+		Name:   name,
+		Symbol: symbol,
+		Market: marketUpper,
+		Errors: []string{},
+	}
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	// 1. 获取 Quote
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("Quote panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		quote, err := a.GetStockQuote(symbol)
+		if err != nil || quote == nil {
+			mu.Lock()
+			result.Errors = append(result.Errors, fmt.Sprintf("获取行情失败: %v", err))
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.CurrentPrice = quote.CurrentPrice
+		result.ChangePercent = quote.ChangePercent
+		result.TurnoverRate = quote.TurnoverRate
+		result.VolumeRatio = quote.VolumeRatio
+		result.MainInflow = quote.TurnoverAmount * quote.ChangePercent / 100 // 近似主力净流入（若接口无直接字段）
+		mu.Unlock()
+	}()
+
+	// 2. 获取 Profile
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("Profile panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		profile, err := a.GetStockProfile(symbol)
+		if err != nil || profile == nil {
+			mu.Lock()
+			result.Errors = append(result.Errors, fmt.Sprintf("获取资料失败: %v", err))
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.Industry = profile.Industry
+		result.MarketCap = profile.MarketCap
+		result.PE = profile.PE
+		result.PB = profile.PB
+		result.EPS = profile.EPS
+		mu.Unlock()
+	}()
+
+	// 3. 获取 Concepts
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("Concepts panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		concepts, err := a.GetStockConcepts(symbol)
+		if err != nil || concepts == nil {
+			mu.Lock()
+			result.Errors = append(result.Errors, fmt.Sprintf("获取概念失败: %v", err))
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.Concepts = concepts.Concepts
+		mu.Unlock()
+	}()
+
+	// 4. 获取 Sentiment（直接调用 downloader，非 Wails 绑定）
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("Sentiment panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		sentiment, err := downloader.FetchStockSentiment(marketUpper, code)
+		if err != nil || sentiment == nil {
+			mu.Lock()
+			result.HasSentimentData = false
+			mu.Unlock()
+			return
+		}
+		mu.Lock()
+		result.SentimentScore = sentiment.Score
+		result.SentimentHeat = sentiment.HeatIndex
+		// 合并正负向关键词
+		keywords := make([]string, 0, len(sentiment.PositiveWords)+len(sentiment.NegativeWords))
+		keywords = append(keywords, sentiment.PositiveWords...)
+		keywords = append(keywords, sentiment.NegativeWords...)
+		if len(keywords) > 6 {
+			keywords = keywords[:6]
+		}
+		result.SentimentKeywords = keywords
+		result.HasSentimentData = sentiment.HasData
+		mu.Unlock()
+	}()
+
+	// 5. 获取个股资金流向（优先 Tushare moneyflow，替换 Quote 中的近似值）
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("Moneyflow panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		if a.dataRouter != nil && a.dataRouter.IsUseForMoneyflow() {
+			today := time.Now().Format("20060102")
+			items, err := a.dataRouter.FetchMoneyflow(marketUpper, code, today, today)
+			if err == nil && len(items) > 0 {
+				item := items[0]
+				smNet := item.BuySmAmount - item.SellSmAmount
+				mdNet := item.BuyMdAmount - item.SellMdAmount
+				lgNet := item.BuyLgAmount - item.SellLgAmount
+				elgNet := item.BuyElgAmount - item.SellElgAmount
+				mainInflow := lgNet + elgNet
+				mu.Lock()
+				result.HasMoneyflowData = true
+				result.MainInflow = mainInflow
+				result.SmNetAmount = smNet
+				result.MdNetAmount = mdNet
+				result.LgNetAmount = lgNet
+				result.ElgNetAmount = elgNet
+				mu.Unlock()
+				return
+			}
+		}
+		// 未启用 Tushare 或获取失败：保留 Quote goroutine 中的近似值
+	}()
+
+	wg.Wait()
+
+	// 计算 concept_match：当前股票概念与传入的热点概念名称的交集
+	if conceptCode != "" {
+		// 查找热点概念名称
+		var hotConceptName string
+		if board, err := a.FetchHotConcepts(20); err == nil && board != nil {
+			for _, c := range board.Concepts {
+				if c.Code == conceptCode {
+					hotConceptName = c.Name
+					break
+				}
+			}
+		}
+		if hotConceptName != "" {
+			for _, concept := range result.Concepts {
+				if strings.Contains(concept, hotConceptName) || strings.Contains(hotConceptName, concept) {
+					result.ConceptMatch = append(result.ConceptMatch, concept)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// inferMarketFromCodeQuick 通过 A 股代码前缀快速推断市场
+func inferMarketFromCodeQuick(code string) string {
+	if len(code) == 0 {
+		return "SH"
+	}
+	prefix := code[0]
+	if prefix == '6' || prefix == '5' {
+		return "SH"
+	}
+	if prefix == '0' || prefix == '3' {
+		return "SZ"
+	}
+	if prefix == '8' || prefix == '4' {
+		return "BJ"
+	}
+	return "SH"
+}
+
 // ConfirmDialog 显示确认对话框，返回用户是否点击了"确定"
 func (a *App) ConfirmDialog(title, message string) bool {
 	selection, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
@@ -2574,4 +3046,155 @@ func (a *App) ConfirmDialog(title, message string) bool {
 	debugLog("[ConfirmDialog] selection=%q", selection)
 	// Windows 系统对话框可能返回英文按钮文本，做兼容处理
 	return selection == "确定" || selection == "Yes" || selection == "OK"
+}
+
+// ========== Tushare 配置 Wails 绑定 ==========
+
+// GetTushareConfig 获取 Tushare 配置
+func (a *App) GetTushareConfig() (*TushareConfig, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("存储未初始化")
+	}
+	return a.storage.LoadTushareConfig()
+}
+
+// SaveTushareConfig 保存 Tushare 配置
+func (a *App) SaveTushareConfig(cfg TushareConfig) error {
+	if a.storage == nil {
+		return fmt.Errorf("存储未初始化")
+	}
+	if err := a.storage.SaveTushareConfig(&cfg); err != nil {
+		return err
+	}
+	// 配置变更后重新加载数据源路由
+	a.reloadDataRouter()
+	return nil
+}
+
+// reloadDataRouter 根据当前配置重新加载数据源路由
+func (a *App) reloadDataRouter() {
+	if a.storage == nil {
+		return
+	}
+	cfg, err := a.storage.LoadTushareConfig()
+	if err != nil {
+		fmt.Printf("[DataRouter] 加载 Tushare 配置失败: %v\n", err)
+		a.dataRouter = downloader.NewDataRouter("", false, false, false, false, false)
+		return
+	}
+	fmt.Printf("[DataRouter] Tushare enabled=%v token=%v financial=%v kline=%v quote=%v moneyflow=%v\n",
+		cfg.Enabled, cfg.Token != "", cfg.UseForFinancial, cfg.UseForKline, cfg.UseForQuote, cfg.UseForMoneyflow)
+	a.dataRouter = downloader.NewDataRouter(cfg.Token, cfg.Enabled,
+		cfg.UseForFinancial, cfg.UseForKline, cfg.UseForQuote, cfg.UseForMoneyflow)
+
+	// 设置热点概念降级用的 Tushare 客户端
+	if cfg.Enabled && cfg.Token != "" {
+		downloader.SetTushareHotConceptClient(downloader.NewTushareClient(cfg.Token))
+	} else {
+		downloader.SetTushareHotConceptClient(nil)
+	}
+}
+
+// TushareVerifyResult Tushare Token 验证结果
+type TushareVerifyResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// VerifyTushareToken 验证 Tushare Token 是否有效
+func (a *App) VerifyTushareToken(token string) (*TushareVerifyResult, error) {
+	if token == "" {
+		return &TushareVerifyResult{Success: false, Message: "Token 不能为空"}, nil
+	}
+	client := downloader.NewTushareClient(token)
+	if err := client.VerifyToken(); err != nil {
+		return &TushareVerifyResult{Success: false, Message: fmt.Sprintf("验证失败: %v", err)}, nil
+	}
+	return &TushareVerifyResult{Success: true, Message: "验证通过，Token 有效"}, nil
+}
+
+// ========== 个股资金流向 ==========
+
+// StockMoneyflowItem 单日资金流向数据
+type StockMoneyflowItem struct {
+	Date         string  `json:"date"`
+	MainInflow   float64 `json:"main_inflow"`   // 主力净流入（大单+特大单）
+	SmNetAmount  float64 `json:"sm_net_amount"` // 小单净流入
+	MdNetAmount  float64 `json:"md_net_amount"` // 中单净流入
+	LgNetAmount  float64 `json:"lg_net_amount"` // 大单净流入
+	ElgNetAmount float64 `json:"elg_net_amount"` // 特大单净流入
+}
+
+// StockMoneyflowResult 个股资金流向查询结果
+type StockMoneyflowResult struct {
+	Symbol  string               `json:"symbol"`
+	Items   []StockMoneyflowItem `json:"items"`
+	HasData bool                 `json:"has_data"`
+	Summary string               `json:"summary"` // 简要分析
+}
+
+// GetStockMoneyflow 获取个股近 N 日资金流向（优先 Tushare）
+func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult, error) {
+	if a.dataRouter == nil || !a.dataRouter.IsUseForMoneyflow() {
+		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "Tushare 资金流向未启用"}, nil
+	}
+
+	parts := strings.Split(symbol, ".")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("无效的股票代码格式: %s", symbol)
+	}
+	code := parts[0]
+	market := strings.ToUpper(parts[1])
+
+	end := time.Now().Format("20060102")
+	start := time.Now().AddDate(0, 0, -days).Format("20060102")
+
+	items, err := a.dataRouter.FetchMoneyflow(market, code, start, end)
+	if err != nil || len(items) == 0 {
+		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "暂无资金流向数据"}, nil
+	}
+
+	result := &StockMoneyflowResult{
+		Symbol:  symbol,
+		HasData: true,
+		Items:   make([]StockMoneyflowItem, 0, len(items)),
+	}
+
+	var totalMain float64
+	var inflowDays int
+	for _, item := range items {
+		smNet := item.BuySmAmount - item.SellSmAmount
+		mdNet := item.BuyMdAmount - item.SellMdAmount
+		lgNet := item.BuyLgAmount - item.SellLgAmount
+		elgNet := item.BuyElgAmount - item.SellElgAmount
+		mainInflow := lgNet + elgNet
+
+		result.Items = append(result.Items, StockMoneyflowItem{
+			Date:         item.TradeDate,
+			MainInflow:   mainInflow,
+			SmNetAmount:  smNet,
+			MdNetAmount:  mdNet,
+			LgNetAmount:  lgNet,
+			ElgNetAmount: elgNet,
+		})
+
+		totalMain += mainInflow
+		if mainInflow > 0 {
+			inflowDays++
+		}
+	}
+
+	// 生成简要分析
+	dayCount := len(items)
+	if inflowDays == dayCount {
+		result.Summary = fmt.Sprintf("近%d日主力持续流入，累计 %.2f 亿元", dayCount, totalMain/10000)
+	} else if inflowDays == 0 {
+		result.Summary = fmt.Sprintf("近%d日主力持续流出，累计 %.2f 亿元", dayCount, totalMain/10000)
+	} else if totalMain > 0 {
+		result.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流入 %.2f 亿元", dayCount, inflowDays, totalMain/10000)
+	} else {
+		result.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流出 %.2f 亿元", dayCount, inflowDays, -totalMain/10000)
+	}
+
+	return result, nil
 }

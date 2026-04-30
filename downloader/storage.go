@@ -13,9 +13,9 @@ func SaveAsJSON(data *FinancialReportData, dir string) error {
 		return err
 	}
 	files := map[string]map[string]map[string]float64{
-		"balance_sheet.json":   data.BalanceSheet,
+		"balance_sheet.json":    data.BalanceSheet,
 		"income_statement.json": data.IncomeStatement,
-		"cash_flow.json":       data.CashFlow,
+		"cash_flow.json":        data.CashFlow,
 	}
 	for name, content := range files {
 		path := filepath.Join(dir, name)

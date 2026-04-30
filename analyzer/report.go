@@ -7,7 +7,14 @@ import (
 )
 
 // GenerateMarkdown 生成增强版 Markdown 格式的投资分析报告（14模块标准框架）
-func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores map[string]*YearScore, comp *ComparableAnalysis, industry *IndustryComparison, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, ml *MLPredictionData, rim *RIMData) string {
+func sign(v float64) string {
+	if v > 0 {
+		return "+"
+	}
+	return ""
+}
+
+func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores map[string]*YearScore, comp *ComparableAnalysis, industry *IndustryComparison, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData, ml *MLPredictionData, rim *RIMData) string {
 	if len(years) == 0 {
 		return "# 无数据\n\n未找到可用的财务数据。"
 	}
@@ -60,7 +67,7 @@ func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores 
 	writeAScoreProfile(&b, steps, years, latest, comp)
 
 	// ==================== 模块9: 技术面分析 ====================
-	writeModule8(&b, quote, technical, activity)
+	writeModule8(&b, quote, technical, activity, moneyflow)
 
 	// ==================== 模块10: ML机器学习预测 ====================
 	writeModule9(&b, steps, latest, prev, ml)
@@ -164,11 +171,11 @@ func writeTOC(b *strings.Builder) {
 // ========== 8项核心指标高亮 ==========
 func writeEightIndicatorsHighlight(b *strings.Builder, steps []StepResult, latest string) {
 	indicators := []struct {
-		name     string
-		value    float64
-		unit     string
-		passed   bool
-		operator string
+		name      string
+		value     float64
+		unit      string
+		passed    bool
+		operator  string
 		threshold float64
 	}{
 		{"ROE", getStepValue(steps, 16, latest, "roe"), "%", getStepValue(steps, 16, latest, "roe") > 20, ">", 20},
@@ -350,7 +357,7 @@ func writeModule2(b *strings.Builder, quote *QuoteData) {
 func writeModule3(b *strings.Builder, steps []StepResult, years []string, latest, prev string) {
 	b.WriteString("# 模块3: 公司基本面分析\n\n")
 
-	b.WriteString("## 3.1 全年核心财务数据" + traceTrigger(3,9,10,15,16) + "\n\n")
+	b.WriteString("## 3.1 全年核心财务数据" + traceTrigger(3, 9, 10, 15, 16) + "\n\n")
 	b.WriteString(fmt.Sprintf("| 指标 | %s | %s | 同比 | 评估 |\n", latest, prev))
 	b.WriteString("|------|--------|------|------|------|\n")
 	writeMetricRow(b, "营业收入", getStepValue(steps, 9, latest, "revenue"), getStepValue(steps, 9, prev, "revenue"), "亿元", 1e8)
@@ -361,7 +368,7 @@ func writeModule3(b *strings.Builder, steps []StepResult, years []string, latest
 	writeMetricRow(b, "经营现金流净额", getStepValue(steps, 15, latest, "operatingCF"), getStepValue(steps, 15, prev, "operatingCF"), "亿元", 1e8)
 	b.WriteString("\n")
 
-	b.WriteString("## 3.2 核心财务指标趋势（近5年）" + traceTrigger(3,9,10,15,16) + "\n\n")
+	b.WriteString("## 3.2 核心财务指标趋势（近5年）" + traceTrigger(3, 9, 10, 15, 16) + "\n\n")
 	b.WriteString("| 年度 | ROE | 毛利率 | 资产负债率 | 营收增长率 | 净利润现金含量 | M-Score |\n")
 	b.WriteString("|------|-----|--------|------------|------------|----------------|---------|\n")
 	for i := 0; i < len(years) && i < 5; i++ {
@@ -429,19 +436,19 @@ func writeModule4(b *strings.Builder, steps []StepResult, latest string, comp *C
 		b.WriteString("## 4.0 行业均值对比\n\n")
 		b.WriteString("| 指标 | 当前公司 | 行业均值 | 差异 | 说明 |\n")
 		b.WriteString("|------|----------|----------|------|------|\n")
-		
+
 		roe := getStepValue(steps, 16, latest, "roe")
 		gm := getStepValue(steps, 10, latest, "grossMargin")
 		growth := getStepValue(steps, 9, latest, "growthRate")
 		debt := getStepValue(steps, 3, latest, "debtRatio")
-		
+
 		roeEmoji := "➡️"
 		if industry.ROEPercentile >= 75 {
 			roeEmoji = "🟢"
 		} else if industry.ROEPercentile <= 25 {
 			roeEmoji = "🔴"
 		}
-		
+
 		b.WriteString(fmt.Sprintf("| **ROE** | %.2f%% | %s | %+.2f%% | %s 行业百分位: %.0f%% |\n",
 			roe, industry.Industry, industry.GMDiff, roeEmoji, industry.ROEPercentile))
 		b.WriteString(fmt.Sprintf("| **毛利率** | %.2f%% | 行业均值 | %+.2f%% | %s |\n",
@@ -451,7 +458,7 @@ func writeModule4(b *strings.Builder, steps []StepResult, latest string, comp *C
 		b.WriteString(fmt.Sprintf("| **负债率** | %.2f%% | 行业均值 | %+.2f%% | %s |\n",
 			debt, industry.DebtDiff, getDiffEmoji(-industry.DebtDiff)))
 		b.WriteString("\n")
-		
+
 		b.WriteString(fmt.Sprintf("> **行业对比总结**: %s\n\n", industry.Summary))
 	}
 
@@ -472,7 +479,7 @@ func writeModule4(b *strings.Builder, steps []StepResult, latest string, comp *C
 		ActivityScore: activityScore,
 	}
 
-	b.WriteString(fmt.Sprintf("## 4.1 可比公司关键指标对比（%s）", latest) + traceTrigger(3,9,10,15,16) + "\n\n")
+	b.WriteString(fmt.Sprintf("## 4.1 可比公司关键指标对比（%s）", latest) + traceTrigger(3, 9, 10, 15, 16) + "\n\n")
 	b.WriteString("| 指标 | 当前公司 | 可比均值 | 最高 | 最低 | 排名百分位 |\n")
 	b.WriteString("|------|----------|----------|------|------|------------|\n")
 	b.WriteString(fmt.Sprintf("| **ROE** | %.2f%% | %.2f%% | %.2f%% | %.2f%% | %.0f%% |\n",
@@ -489,7 +496,9 @@ func writeModule4(b *strings.Builder, steps []StepResult, latest string, comp *C
 		target.AScore, comp.Average.AScore, comp.Max.AScore, comp.Min.AScore, RankPercentile(comp.Metrics, target, "aScore")))
 	if target.ActivityScore >= 0 || comp.Average.ActivityScore >= 0 {
 		avgAct := comp.Average.ActivityScore
-		if avgAct < 0 { avgAct = 0 }
+		if avgAct < 0 {
+			avgAct = 0
+		}
 		b.WriteString(fmt.Sprintf("| **活跃度** | %.0f | %.0f | %.0f | %.0f | %.0f%% |\n",
 			math.Max(0, target.ActivityScore), avgAct, math.Max(0, comp.Max.ActivityScore), math.Max(0, comp.Min.ActivityScore), RankPercentile(comp.Metrics, target, "activityScore")))
 	}
@@ -551,7 +560,6 @@ func writeModule4(b *strings.Builder, steps []StepResult, latest string, comp *C
 	} else {
 		advice = "当前公司相对可比公司存在明显短板，建议谨慎"
 	}
-
 
 	// 检查是否有缺失活跃度的可比公司
 	hasMissingActivity := false
@@ -734,10 +742,10 @@ func writeModule6(b *strings.Builder, quote *QuoteData) {
 	b.WriteString("| 指标 | 数值 |\n")
 	b.WriteString("|------|------|\n")
 	if quote.MarketCap > 0 {
-		b.WriteString(fmt.Sprintf("| **总市值** | %.2f 亿元 |\n", quote.MarketCap/1e8))
+		b.WriteString(fmt.Sprintf("| **总市值** | %.0f 万元 |\n", quote.MarketCap/1e8))
 	}
 	if quote.CirculatingMarketCap > 0 {
-		b.WriteString(fmt.Sprintf("| **流通市值** | %.2f 亿元 |\n", quote.CirculatingMarketCap/1e8))
+		b.WriteString(fmt.Sprintf("| **流通市值** | %.0f 万元 |\n", quote.CirculatingMarketCap/1e8))
 	}
 	if quote.PE > 0 {
 		b.WriteString(fmt.Sprintf("| **市盈率(动)** | %.2f |\n", quote.PE))
@@ -879,7 +887,7 @@ func rimSourceDesc(rim *RIMData, quote *QuoteData) string {
 }
 
 // ========== 模块9: 技术面分析 ==========
-func writeModule8(b *strings.Builder, quote *QuoteData, technical *TechnicalData, activity *ActivityData) {
+func writeModule8(b *strings.Builder, quote *QuoteData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData) {
 	b.WriteString("# 模块9: 技术面分析\n\n")
 
 	if quote == nil || quote.CurrentPrice == 0 {
@@ -940,10 +948,18 @@ func writeModule8(b *strings.Builder, quote *QuoteData, technical *TechnicalData
 
 	b.WriteString("\n## 9.3 短期技术倾向\n\n")
 	score := 0
-	if quote.ChangePercent > 0 { score++ }
-	if cp > open { score++ }
-	if high > prev && low > prev*0.97 { score++ }
-	if tr > 1 { score++ }
+	if quote.ChangePercent > 0 {
+		score++
+	}
+	if cp > open {
+		score++
+	}
+	if high > prev && low > prev*0.97 {
+		score++
+	}
+	if tr > 1 {
+		score++
+	}
 
 	switch score {
 	case 4:
@@ -981,6 +997,59 @@ func writeModule8(b *strings.Builder, quote *QuoteData, technical *TechnicalData
 		b.WriteString("\n## 9.5 交易活跃度潜力提示\n\n")
 		b.WriteString(fmt.Sprintf("> **活跃度评级**: %s（%.0f分）\n\n", formatActivityStars(activity.Stars), activity.Score))
 		b.WriteString(fmt.Sprintf("> 💡 **提示**: %s\n\n", activity.PotentialHint))
+	}
+
+	// 新增：资金流向分析
+	if moneyflow != nil && moneyflow.HasData && len(moneyflow.Items) > 0 {
+		b.WriteString("\n## 9.6 资金流向分析\n\n")
+		b.WriteString(fmt.Sprintf("> **%s**\n\n", moneyflow.Summary))
+		b.WriteString("| 日期 | 主力净流入 | 超大单 | 大单 | 中单 | 小单 |\n")
+		b.WriteString("|------|-----------|--------|------|------|------|\n")
+		for _, item := range moneyflow.Items {
+			dateStr := item.Date
+			if len(dateStr) == 8 {
+				dateStr = dateStr[:4] + "-" + dateStr[4:6] + "-" + dateStr[6:]
+			}
+			b.WriteString(fmt.Sprintf("| %s | %s%.2f亿 | %s%.2f亿 | %s%.2f亿 | %s%.2f亿 | %s%.2f亿 |\n",
+				dateStr,
+				sign(item.MainInflow), math.Abs(item.MainInflow)/1e4,
+				sign(item.ElgNetAmount), math.Abs(item.ElgNetAmount)/1e4,
+				sign(item.LgNetAmount), math.Abs(item.LgNetAmount)/1e4,
+				sign(item.MdNetAmount), math.Abs(item.MdNetAmount)/1e4,
+				sign(item.SmNetAmount), math.Abs(item.SmNetAmount)/1e4,
+			))
+		}
+		b.WriteString("\n")
+		// 资金流向综合判断
+		var inflowDays, outflowDays int
+		var totalMain float64
+		for _, item := range moneyflow.Items {
+			totalMain += item.MainInflow
+			if item.MainInflow > 0 {
+				inflowDays++
+			} else if item.MainInflow < 0 {
+				outflowDays++
+			}
+		}
+		if inflowDays > outflowDays {
+			b.WriteString(fmt.Sprintf("- **主力资金整体呈流入态势**：近%d日中%d日净流入，累计主力净流入 %.2f 亿，表明机构资金对该股关注度较高。\n", len(moneyflow.Items), inflowDays, totalMain/1e4))
+		} else if outflowDays > inflowDays {
+			b.WriteString(fmt.Sprintf("- **主力资金整体呈流出态势**：近%d日中%d日净流出，累计主力净流出 %.2f 亿，需警惕机构资金撤离风险。\n", len(moneyflow.Items), outflowDays, -totalMain/1e4))
+		} else {
+			b.WriteString(fmt.Sprintf("- **主力资金分歧较大**：近%d日流入与流出天数持平，累计主力净流入 %.2f 亿，资金博弈激烈。\n", len(moneyflow.Items), totalMain/1e4))
+		}
+		// 散户与机构对比
+		var totalSm, totalMd float64
+		for _, item := range moneyflow.Items {
+			totalSm += item.SmNetAmount
+			totalMd += item.MdNetAmount
+		}
+		if totalSm > 0 && totalMain < 0 {
+			b.WriteString("- **散户接盘迹象**：小单持续流入而主力净流出，可能存在散户接盘、主力出货的风险信号。\n")
+		} else if totalSm < 0 && totalMain > 0 {
+			b.WriteString("- **机构吸筹特征**：小单持续流出而主力净流入，可能是机构在低位吸筹、散户恐慌抛售。\n")
+		}
+		b.WriteString("\n")
 	}
 
 	b.WriteString("\n---\n\n")
@@ -1071,7 +1140,7 @@ func writeModule9(b *strings.Builder, steps []StepResult, latest, prev string, m
 	b.WriteString("## 10.3 Engine-D 风险预警模型（GradientBoosting）\n\n")
 	if ml != nil && ml.EngineD != nil {
 		dp := ml.EngineD
-		
+
 		// 风险等级颜色标识
 		riskEmoji := "🟢"
 		if dp.RiskLevel == "中风险" {
@@ -1079,23 +1148,23 @@ func writeModule9(b *strings.Builder, steps []StepResult, latest, prev string, m
 		} else if dp.RiskLevel == "高风险" {
 			riskEmoji = "🔴"
 		}
-		
+
 		modelStatus := "✅ 模型"
 		if !dp.ModelLoaded {
 			modelStatus = "⚠️ 规则"
 		}
-		
+
 		b.WriteString(fmt.Sprintf("| 指标 | 结果 | 说明 |\n"))
 		b.WriteString("|------|------|------|\n")
 		b.WriteString(fmt.Sprintf("| 风险评级 | %s %s | 基于%s评估 |\n", riskEmoji, dp.RiskLevel, modelStatus))
 		b.WriteString(fmt.Sprintf("| 风险概率 | %.1f%% | 财务造假/退市风险概率 |\n", dp.RiskProb*100))
-		
+
 		if len(dp.TopFactors) > 0 {
 			factorsStr := strings.Join(dp.TopFactors, ", ")
 			b.WriteString(fmt.Sprintf("| 主要风险因子 | %s | 影响最大的特征 |\n", factorsStr))
 		}
 		b.WriteString("\n")
-		
+
 		// 风险提示
 		if dp.RiskLabel == 1 {
 			b.WriteString("> ⚠️ **风险提示**: Engine-D 模型识别到潜在风险信号，建议进一步审慎评估。\n\n")
@@ -1182,7 +1251,7 @@ func writeModule9(b *strings.Builder, steps []StepResult, latest, prev string, m
 // ========== 模块11: 智能选股7大条件 ==========
 func writeModule10(b *strings.Builder, steps []StepResult, latest, prev string) {
 	b.WriteString("# 模块11: 智能选股7大条件\n\n")
-	b.WriteString("## 11.1 条件检查表" + traceTrigger(3,9,10,15,16) + "\n\n")
+	b.WriteString("## 11.1 条件检查表" + traceTrigger(3, 9, 10, 15, 16) + "\n\n")
 
 	roe := getStepValue(steps, 16, latest, "roe")
 	gm := getStepValue(steps, 10, latest, "grossMargin")
@@ -1305,7 +1374,7 @@ func writeModule11(b *strings.Builder, steps []StepResult, latest string, score 
 // ========== 模块13: 巴菲特-芒格投资检查清单 ==========
 func writeModule12(b *strings.Builder, steps []StepResult, latest string, score *YearScore) {
 	b.WriteString("# 模块13: 巴菲特-芒格投资检查清单\n\n")
-	b.WriteString("## 13.1 7项核心检查" + traceTrigger(3,7,10,15,16,18) + "\n\n")
+	b.WriteString("## 13.1 7项核心检查" + traceTrigger(3, 7, 10, 15, 16, 18) + "\n\n")
 
 	roe := getStepValue(steps, 16, latest, "roe")
 	gm := getStepValue(steps, 10, latest, "grossMargin")
@@ -1352,11 +1421,11 @@ func writeModule12(b *strings.Builder, steps []StepResult, latest string, score 
 	} else {
 		b.WriteString(fmt.Sprintf("- ✅ 业绩正增长？**是**（营收%.2f%%，净利润%.2f%%）\n", growth, pg))
 	}
-		if ascore := getStepValue(steps, 8, latest, "AScore"); ascore >= 60 {
-			b.WriteString(fmt.Sprintf("- ❌ 财报可信？**存疑**（A-Score %.1f）\n", ascore))
-		} else {
-			b.WriteString(fmt.Sprintf("- ✅ 财报可信？**通过**（A-Score %.1f）\n", ascore))
-		}
+	if ascore := getStepValue(steps, 8, latest, "AScore"); ascore >= 60 {
+		b.WriteString(fmt.Sprintf("- ❌ 财报可信？**存疑**（A-Score %.1f）\n", ascore))
+	} else {
+		b.WriteString(fmt.Sprintf("- ✅ 财报可信？**通过**（A-Score %.1f）\n", ascore))
+	}
 	b.WriteString("\n---\n\n")
 }
 
@@ -1580,7 +1649,7 @@ func formatTradeLevels(quote *QuoteData, rim *RIMData, technical *TechnicalData,
 		low := price * 0.98 * entryDiscount
 		high := price * 1.02
 		entry = fmt.Sprintf("%.2f ~ %.2f元 (现价±2%%试探)", low, high)
-		
+
 		stopPrice := price * 0.90 * stopTighten
 		// 确保止损位低于入场区间低位（预留至少5%的缓冲）
 		maxStopPrice := low * 0.95
@@ -2516,18 +2585,42 @@ func calcComparableScore(m *ComparableMetrics, all []*ComparableMetrics, medianA
 			first = false
 			continue
 		}
-		if x.ROE < minROE { minROE = x.ROE }
-		if x.ROE > maxROE { maxROE = x.ROE }
-		if x.GrossMargin < minGM { minGM = x.GrossMargin }
-		if x.GrossMargin > maxGM { maxGM = x.GrossMargin }
-		if x.RevenueGrowth < minGrowth { minGrowth = x.RevenueGrowth }
-		if x.RevenueGrowth > maxGrowth { maxGrowth = x.RevenueGrowth }
-		if x.DebtRatio < minDebt { minDebt = x.DebtRatio }
-		if x.DebtRatio > maxDebt { maxDebt = x.DebtRatio }
-		if x.CashRatio < minCash { minCash = x.CashRatio }
-		if x.CashRatio > maxCash { maxCash = x.CashRatio }
-		if x.AScore < minAScore { minAScore = x.AScore }
-		if x.AScore > maxAScore { maxAScore = x.AScore }
+		if x.ROE < minROE {
+			minROE = x.ROE
+		}
+		if x.ROE > maxROE {
+			maxROE = x.ROE
+		}
+		if x.GrossMargin < minGM {
+			minGM = x.GrossMargin
+		}
+		if x.GrossMargin > maxGM {
+			maxGM = x.GrossMargin
+		}
+		if x.RevenueGrowth < minGrowth {
+			minGrowth = x.RevenueGrowth
+		}
+		if x.RevenueGrowth > maxGrowth {
+			maxGrowth = x.RevenueGrowth
+		}
+		if x.DebtRatio < minDebt {
+			minDebt = x.DebtRatio
+		}
+		if x.DebtRatio > maxDebt {
+			maxDebt = x.DebtRatio
+		}
+		if x.CashRatio < minCash {
+			minCash = x.CashRatio
+		}
+		if x.CashRatio > maxCash {
+			maxCash = x.CashRatio
+		}
+		if x.AScore < minAScore {
+			minAScore = x.AScore
+		}
+		if x.AScore > maxAScore {
+			maxAScore = x.AScore
+		}
 	}
 	firstAct := true
 	for _, x := range all {
@@ -2540,8 +2633,12 @@ func calcComparableScore(m *ComparableMetrics, all []*ComparableMetrics, medianA
 			firstAct = false
 			continue
 		}
-		if act < minAct { minAct = act }
-		if act > maxAct { maxAct = act }
+		if act < minAct {
+			minAct = act
+		}
+		if act > maxAct {
+			maxAct = act
+		}
 	}
 	if firstAct {
 		minAct, maxAct = 0, 100

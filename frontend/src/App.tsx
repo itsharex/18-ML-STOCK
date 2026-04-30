@@ -126,6 +126,11 @@ import {
   GetStockQuote,
   // GetStockKlines,
   GetStockConcepts,
+  FetchHotConcepts,
+  FetchHotConceptHistory,
+  FetchHotConceptConstituents,
+  QuickAnalyzeStock,
+  GetStockMoneyflow,
   ExportCurrentFinancialData,
   GetRiskRadar,
   UpdatePolicyLibrary,
@@ -142,6 +147,7 @@ import type { main, analyzer, downloader } from '../wailsjs/go/models'
 type Stock = main.StockInfo
 type WatchlistItem = main.WatchlistItem
 type ImportResult = main.ImportResult
+type QuickAnalysis = main.QuickAnalysis
 type AnalysisReport = analyzer.AnalysisReport
 type StepResult = analyzer.StepResult
 type DownloadResult = main.DownloadResult
@@ -232,6 +238,23 @@ function App() {
   const [fetchActivityStatus, setFetchActivityStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
 
   const [concepts, setConcepts] = useState<downloader.StockConcepts | null>(null)
+  const [moneyflow, setMoneyflow] = useState<main.StockMoneyflowResult | null>(null)
+
+  // 市场热点/风口
+  const [hotConcepts, setHotConcepts] = useState<downloader.HotConcept[]>([])
+  const [hotConceptDate, setHotConceptDate] = useState<string>('')
+  const [hotConceptLoading, setHotConceptLoading] = useState(false)
+  const [hotConceptHistory, setHotConceptHistory] = useState<Record<string, string[]>>({})
+  const [conceptConstituents, setConceptConstituents] = useState<Record<string, downloader.ConceptConstituent[]>>({})
+  const [hotConceptError, setHotConceptError] = useState<string>('')
+  const [hotPanelOpen, setHotPanelOpen] = useState(false)
+  const [selectedHotConceptCode, setSelectedHotConceptCode] = useState<string | null>(null)
+
+  // 快速分析
+  const [quickAnalysisCode, setQuickAnalysisCode] = useState<string | null>(null)
+  const [quickAnalysisData, setQuickAnalysisData] = useState<QuickAnalysis | null>(null)
+  const [quickAnalysisLoading, setQuickAnalysisLoading] = useState(false)
+
   const [policyLibMeta, setPolicyLibMeta] = useState<{version: string, updatedAt: string} | null>(null)
   const [policyUpdating, setPolicyUpdating] = useState(false)
   const [industryDBMeta, setIndustryDBMeta] = useState<{version: string, updatedAt: string, count: number} | null>(null)
@@ -724,6 +747,15 @@ function App() {
     }
   }, [])
 
+  const loadMoneyflow = useCallback(async (code: string) => {
+    try {
+      const mf = await GetStockMoneyflow(code, 5)
+      setMoneyflow(mf || null)
+    } catch {
+      setMoneyflow(null)
+    }
+  }, [])
+
   // 加载政策库元信息（从 localStorage 或默认值）
   const loadPolicyLibMeta = useCallback(() => {
     try {
@@ -823,6 +855,60 @@ function App() {
       setIndustryUpdating(false)
     }
   }, [loadIndustryDBMeta])
+
+  // ========== 市场热点/风口 ==========
+  const loadHotConcepts = useCallback(async () => {
+    setHotConceptLoading(true)
+    setHotConceptError('')
+    try {
+      const board = await FetchHotConcepts(20)
+      console.log('[HotConcepts] loaded', board?.concepts?.length, 'concepts')
+      if (board && board.concepts) {
+        setHotConcepts(board.concepts)
+        setHotConceptDate(board.date)
+        // 加载历史用于连续上榜标记
+        const history = await FetchHotConceptHistory(7)
+        const historyMap: Record<string, string[]> = {}
+        history.forEach((h: any) => {
+          historyMap[h.date] = h.top_names || []
+        })
+        setHotConceptHistory(historyMap)
+      }
+    } catch (err: any) {
+      console.error('加载热门概念失败:', err)
+      setHotConceptError('获取热门概念失败，请检查网络')
+    } finally {
+      setHotConceptLoading(false)
+    }
+  }, [])
+
+  const loadConceptConstituents = useCallback(async (code: string) => {
+    if (!code) return
+    try {
+      console.log('[Constituents] loading for', code)
+      const list = await FetchHotConceptConstituents(code)
+      console.log('[Constituents] loaded', list?.length, 'stocks for', code)
+      setConceptConstituents((prev) => ({ ...prev, [code]: list || [] }))
+    } catch (err: any) {
+      console.error('加载成分股失败:', err)
+      setConceptConstituents((prev) => ({ ...prev, [code]: [] }))
+    }
+  }, [])
+
+  const loadQuickAnalysis = useCallback(async (code: string, name: string, market: string) => {
+    setQuickAnalysisCode(code)
+    setQuickAnalysisLoading(true)
+    setQuickAnalysisData(null)
+    try {
+      const data = await QuickAnalyzeStock(code, name, market, selectedHotConceptCode || '')
+      setQuickAnalysisData(data)
+    } catch (err: any) {
+      console.error('快速分析失败:', err)
+      setQuickAnalysisData(null)
+    } finally {
+      setQuickAnalysisLoading(false)
+    }
+  }, [selectedHotConceptCode])
 
   const loadComparables = useCallback(async (code: string) => {
     try {
@@ -1634,6 +1720,44 @@ function App() {
 
       {/* 左栏：自选列表 */}
       <aside className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
+        {/* 市场热点入口：固定行，点击 → 送到中栏 */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '8px 0',
+          marginTop: 10,
+          borderBottom: '1px solid rgba(148,163,184,0.1)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>🔥</span>
+            <span style={{ fontWeight: 600, fontSize: 14 }}>市场热点</span>
+            {hotConceptDate && (
+              <span style={{ fontSize: 11, color: '#64748b' }}>{hotConceptDate}</span>
+            )}
+          </div>
+          <span
+            style={{ fontSize: 18, color: '#3b82f6', cursor: 'pointer', padding: '0 4px' }}
+            title="查看热点详情"
+            onClick={() => {
+              setHotPanelOpen(true)
+              setSelectedCode(null)
+              setSelectedHotConceptCode(null)
+              setReport(null)
+              setViewingHistory(null)
+              setHistoryContent('')
+              if (!hotConceptLoading) {
+                loadHotConcepts()
+              }
+            }}
+          >
+            →
+          </span>
+        </div>
+        {hotConceptError && (
+          <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>{hotConceptError}</div>
+        )}
+
         <div className="sidebar-header">
           <h2>自选股票</h2>
           <div className="search-box">
@@ -1813,6 +1937,8 @@ function App() {
                 }}
                 onClick={() => {
                   setSelectedCode(s.code)
+                  setHotPanelOpen(false)
+                  setSelectedHotConceptCode(null)
                   setProfile(null)
                   setQuote(null)
                   setQuoteError('')
@@ -1828,6 +1954,7 @@ function App() {
                   loadDataHistory(s.code)
                   loadProfile(s.code).then((p) => loadRiskRadar(s.code, p?.industry || ''))
                   loadConcepts(s.code)
+                  loadMoneyflow(s.code)
                   loadComparables(s.code)
                   loadQuote(s.code)
                   // loadKlines(s.code)
@@ -1884,7 +2011,127 @@ function App() {
 
       {/* 中栏：股票信息 & 操作 */}
       <section className="info-panel">
-        {selectedStock ? (
+        {hotPanelOpen ? (
+          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            {/* 热点详情面板 */}
+            <div className="stock-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, padding: '8px 0' }}>
+              <span
+                style={{ fontSize: 18, color: '#3b82f6', cursor: 'pointer', padding: '0 4px' }}
+                title="返回自选股票"
+                onClick={() => {
+                  setHotPanelOpen(false)
+                  setSelectedHotConceptCode(null)
+                }}
+              >
+                ←
+              </span>
+              <button
+                className="btn-text"
+                onClick={loadHotConcepts}
+                disabled={hotConceptLoading}
+              >
+                {hotConceptLoading ? '刷新中...' : '刷新'} 🔄
+              </button>
+            </div>
+
+            {hotConceptError && (
+              <div style={{ padding: '8px 0', color: '#ef4444', fontSize: 13, flexShrink: 0 }}>{hotConceptError}</div>
+            )}
+
+            {hotConcepts.length > 0 ? (
+              <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: 4 }}>
+                {/* 表头 */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 70px 70px 50px',
+                  gap: 4,
+                  padding: '6px 8px',
+                  fontSize: 11,
+                  color: '#64748b',
+                  borderBottom: '1px solid rgba(148,163,184,0.15)',
+                  position: 'sticky',
+                  top: 0,
+                  background: 'var(--bg-primary, #0f172a)',
+                  zIndex: 1,
+                }}>
+                  <span>成交额</span>
+                  <span style={{ textAlign: 'right' }}>主力</span>
+                  <span style={{ textAlign: 'right' }}>涨幅</span>
+                  <span style={{ textAlign: 'right' }}>得分</span>
+                </div>
+                {[...hotConcepts].sort((a, b) => {
+                  return (b.score || 0) - (a.score || 0)
+                }).map((c, idx) => {
+                  const consecutiveDays = Object.values(hotConceptHistory).filter(
+                    (names) => names.includes(c.name)
+                  ).length
+                  const isActive = selectedHotConceptCode === c.code
+                  // 热度🔥分级
+                  let fireCount = 1
+                  if (c.score >= 85 || consecutiveDays >= 3) fireCount = 4
+                  else if (c.score >= 70 || consecutiveDays >= 2) fireCount = 3
+                  else if (c.score >= 50) fireCount = 2
+                  const fires = '🔥'.repeat(fireCount)
+                  return (
+                    <div
+                      key={c.code}
+                      onClick={() => {
+                        setSelectedHotConceptCode(c.code)
+                        if (!conceptConstituents[c.code]) {
+                          loadConceptConstituents(c.code)
+                        }
+                      }}
+                      style={{
+                        padding: '6px 8px',
+                        borderBottom: '1px solid rgba(148,163,184,0.06)',
+                        background: isActive ? 'rgba(59,130,246,0.08)' : 'transparent',
+                        borderRadius: isActive ? 4 : 0,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                      }}
+                    >
+                      {/* 第一行：排名 + 名称 + 🔥 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden', marginBottom: 2 }}>
+                        <span style={{ color: '#64748b', fontWeight: 600, fontSize: 11, minWidth: 18 }}>{idx + 1}</span>
+                        <span style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</span>
+                        <span style={{ fontSize: 10 }} title={`热度${fireCount}/4 · 连续${consecutiveDays}天上榜 · 得分${c.score?.toFixed(1)}`}>{fires}</span>
+                      </div>
+                      {/* 第二行：数据 */}
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 70px 70px 50px',
+                        gap: 4,
+                        alignItems: 'center',
+                        color: '#64748b',
+                        fontSize: 11,
+                      }}>
+                        <span>{(c.turnover / 1e8).toFixed(2)}亿</span>
+                        <span style={{
+                          textAlign: 'right',
+                          color: c.main_inflow > 0 ? '#ef4444' : c.main_inflow < 0 ? '#22c55e' : '#64748b',
+                        }}>
+                          {(c.main_inflow / 1e8).toFixed(2)}亿
+                        </span>
+                        <span style={{
+                          textAlign: 'right',
+                          fontWeight: 600,
+                          color: c.change_pct > 0 ? '#ef4444' : c.change_pct < 0 ? '#22c55e' : '#94a3b8',
+                        }}>
+                          {c.change_pct > 0 ? '+' : ''}{c.change_pct?.toFixed(2)}%
+                        </span>
+                        <span style={{ textAlign: 'right', fontWeight: 600, color: '#f59e0b' }}>{c.score?.toFixed(1)}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div style={{ padding: '40px 0', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                暂无热点数据，点击"刷新"获取
+              </div>
+            )}
+          </div>
+        ) : selectedStock ? (
           <>
             <div className="stock-header">
               <h1>{selectedStock.name}<span className="stock-sub">{selectedStock.code}</span></h1>
@@ -1987,6 +2234,78 @@ function App() {
                   })()}
                 </div>
               </div>
+              {/* 近3日资金流向 */}
+              {moneyflow?.has_data && moneyflow.items && moneyflow.items.length > 0 && (
+                <div style={{ padding: '8px 0px', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>近3日资金流向（亿元）</div>
+                  {/* 表头 */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '30px 50px 50px 48px 48px',
+                    gap: 1,
+                    fontSize: 10,
+                    color: '#94a3b8',
+                    paddingBottom: 3,
+                    borderBottom: '1px solid rgba(148,163,184,0.08)',
+                    marginBottom: 3,
+                  }}>
+                    <span style={{ textAlign: 'left' }}>日期</span>
+                    <span style={{ textAlign: 'right' }}>超大</span>
+                    <span style={{ textAlign: 'right' }}>大</span>
+                    <span style={{ textAlign: 'right' }}>中</span>
+                    <span style={{ textAlign: 'right' }}>小</span>
+                  </div>
+                  {/* 数据行 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    {moneyflow.items.slice(0, 3).map((item, idx) => (
+                      <div key={idx} style={{
+                        display: 'grid',
+                        gridTemplateColumns: '30px 50px 50px 48px 48px',
+                        gap: 1,
+                        fontSize: 10,
+                        alignItems: 'center',
+                      }}>
+                        <span style={{ color: '#64748b', fontFamily: 'monospace', textAlign: 'left', whiteSpace: 'nowrap' }}>
+                          {item.date?.slice(4, 6)}/{item.date?.slice(6)}
+                        </span>
+                        <span style={{
+                          color: item.elg_net_amount > 0 ? '#ef4444' : item.elg_net_amount < 0 ? '#22c55e' : '#94a3b8',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {item.elg_net_amount > 0 ? '+' : ''}{(item.elg_net_amount/10000).toFixed(2)}
+                        </span>
+                        <span style={{
+                          color: item.lg_net_amount > 0 ? '#ef4444' : item.lg_net_amount < 0 ? '#22c55e' : '#94a3b8',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {item.lg_net_amount > 0 ? '+' : ''}{(item.lg_net_amount/10000).toFixed(2)}
+                        </span>
+                        <span style={{
+                          color: item.md_net_amount > 0 ? '#ef4444' : item.md_net_amount < 0 ? '#22c55e' : '#94a3b8',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {item.md_net_amount > 0 ? '+' : ''}{(item.md_net_amount/10000).toFixed(2)}
+                        </span>
+                        <span style={{
+                          color: item.sm_net_amount > 0 ? '#ef4444' : item.sm_net_amount < 0 ? '#22c55e' : '#94a3b8',
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {item.sm_net_amount > 0 ? '+' : ''}{(item.sm_net_amount/10000).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  {moneyflow.summary && (
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 5, paddingTop: 4, borderTop: '1px solid rgba(148,163,184,0.06)' }}>
+                      {moneyflow.summary}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="stock-info-footer">
                 <span className="stock-info-time">
                   {profile?.updatedAt
@@ -2097,7 +2416,14 @@ function App() {
               <Collapsible title="⬇️ 下载结果">
                 <div className="import-summary" style={{ marginBottom: 0 }}>
                   <div className="import-row">
-                    <span className="import-label">网络下载</span>
+                    <span className="import-label">
+                      网络下载
+                      {downloadResult.sourceName && (
+                        <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 400, marginLeft: 4 }}>
+                          ({downloadResult.sourceName})
+                        </span>
+                      )}
+                    </span>
                     <span className="import-years">
                       {downloadResult.years?.length
                         ? `${downloadResult.years.length} 年: ${downloadResult.years.join(', ')}`
@@ -2391,6 +2717,251 @@ function App() {
 
       {/* 右栏：报告展示 */}
       <section className="report-panel">
+        {/* 热点成分股面板 */}
+        {selectedHotConceptCode && (
+          <div style={{ borderBottom: '1px solid rgba(148,163,184,0.15)', background: 'rgba(59,130,246,0.03)', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '8px 12px',
+              borderBottom: '1px solid rgba(148,163,184,0.1)',
+            }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                {hotConcepts.find((c) => c.code === selectedHotConceptCode)?.name || '概念板块'} 成分股
+              </span>
+              <button
+                className="btn-text"
+                style={{ fontSize: 12 }}
+                onClick={() => {
+                  setSelectedHotConceptCode(null)
+                  setQuickAnalysisCode(null)
+                  setQuickAnalysisData(null)
+                }}
+              >
+                关闭
+              </button>
+            </div>
+            {(() => {
+              const cons = conceptConstituents[selectedHotConceptCode]
+              const concept = hotConcepts.find((c) => c.code === selectedHotConceptCode)
+              if (!cons) {
+                return <div style={{ padding: '16px 12px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>加载成分股中...</div>
+              }
+              if (cons.length === 0) {
+                return (
+                  <div style={{ padding: '16px 12px' }}>
+                    <div style={{ textAlign: 'center', color: '#64748b', fontSize: 13, marginBottom: 8 }}>暂无成分股数据</div>
+                    {concept && (
+                      <div style={{ textAlign: 'center', fontSize: 12, color: '#94a3b8' }}>
+                        主力净流入: {(concept.main_inflow / 1e8).toFixed(2)}亿 · 龙头: {concept.top_stock || '--'}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+              return (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden', padding: '4px 0' }}>
+                  <div style={{ flexShrink: 0, maxHeight: '50%', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ color: '#64748b', textAlign: 'left' }}>
+                        <th style={{ padding: '6px 10px' }}>代码</th>
+                        <th style={{ padding: '6px 10px' }}>名称</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>最新价</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>涨跌幅</th>
+                        <th style={{ padding: '6px 10px', textAlign: 'right' }}>主力净流入</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cons.slice(0, 20).map((s) => {
+                        const isSelected = quickAnalysisCode === s.code
+                        const inWatchlist = watchlist.some((w) => w.code === s.code)
+                        return (
+                          <tr
+                            key={s.code}
+                            onClick={() => {
+                              if (isSelected) {
+                                setQuickAnalysisCode(null)
+                                setQuickAnalysisData(null)
+                              } else {
+                                loadQuickAnalysis(s.code, s.name, s.market || '')
+                              }
+                            }}
+                            style={{
+                              borderBottom: '1px solid rgba(148,163,184,0.06)',
+                              cursor: 'pointer',
+                              background: isSelected ? 'rgba(59,130,246,0.12)' : 'transparent',
+                            }}
+                          >
+                            <td style={{ padding: '6px 10px', fontFamily: 'monospace', fontSize: 12 }}>
+                              {inWatchlist ? (
+                                <strong style={{ color: '#3b82f6' }}>{s.code}</strong>
+                              ) : (
+                                s.code
+                              )}
+                            </td>
+                            <td style={{ padding: '6px 10px' }}>{s.name}</td>
+                            <td style={{ padding: '6px 10px', textAlign: 'right' }}>{s.price?.toFixed(2) || '--'}</td>
+                            <td style={{
+                              padding: '6px 10px',
+                              textAlign: 'right',
+                              fontWeight: 600,
+                              color: s.change_pct > 0 ? '#ef4444' : s.change_pct < 0 ? '#22c55e' : '#94a3b8',
+                            }}>
+                              {s.change_pct > 0 ? '+' : ''}{s.change_pct?.toFixed(2)}%
+                            </td>
+                            <td style={{ padding: '6px 10px', textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+                              {s.main_inflow.toFixed(0)}万元
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                  </div>
+
+                  {/* 快速分析卡片 */}
+                  {quickAnalysisCode && (
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', margin: '8px 10px', borderRadius: 6, border: '1px solid rgba(148,163,184,0.2)', background: '#fff' }}>
+                      {quickAnalysisLoading && (
+                        <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: 13 }}>
+                          正在分析 {quickAnalysisCode}...
+                        </div>
+                      )}
+                      {!quickAnalysisLoading && quickAnalysisData && (
+                        <>
+                          {/* 顶部标题栏 */}
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '8px 10px',
+                            borderBottom: '1px solid rgba(148,163,184,0.1)',
+                            background: 'rgba(59,130,246,0.05)',
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontWeight: 600, fontSize: 13 }}>{quickAnalysisData.name}</span>
+                              <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>{quickAnalysisData.code}</span>
+                              {watchlist.some((w) => w.code === quickAnalysisData.code) && (
+                                <span style={{ fontSize: 10, color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 4 }}>自选</span>
+                              )}
+                            </div>
+                            <button
+                              className="btn-text"
+                              style={{ fontSize: 12 }}
+                              onClick={() => {
+                                if (watchlist.some((w) => w.code === quickAnalysisData.code)) {
+                                  return
+                                }
+                                AddToWatchlist(quickAnalysisData.symbol || quickAnalysisData.code + '.' + quickAnalysisData.market)
+                                  .then(() => {
+                                    GetWatchlist().then((list) => setWatchlist(list || []))
+                                    alert(`${quickAnalysisData.name} 已加入自选`)
+                                  })
+                                  .catch((err: any) => alert('加入自选失败: ' + (err?.message || err)))
+                              }}
+                              disabled={watchlist.some((w) => w.code === quickAnalysisData.code)}
+                            >
+                              {watchlist.some((w) => w.code === quickAnalysisData.code) ? '已在自选' : '+ 加入自选'}
+                            </button>
+                          </div>
+
+                          {/* 四宫格 */}
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: 1,
+                            fontSize: 12,
+                          }}>
+                            {/* 基本面 */}
+                            <div style={{ padding: '8px 10px', background: 'rgba(59,130,246,0.03)' }}>
+                              <div style={{ fontWeight: 600, color: '#3b82f6', marginBottom: 4, fontSize: 11 }}>📊 基本面</div>
+                              <div style={{ color: '#334155', lineHeight: 1.6 }}>
+                                <div>行业: {quickAnalysisData.industry || '--'}</div>
+                                <div>市值: {quickAnalysisData.market_cap > 0 ? (quickAnalysisData.market_cap / 1e8).toFixed(1) + '亿' : '--'}</div>
+                                <div>PE: {quickAnalysisData.pe > 0 ? quickAnalysisData.pe.toFixed(1) : '--'} · PB: {quickAnalysisData.pb > 0 ? quickAnalysisData.pb.toFixed(1) : '--'}</div>
+                                <div>EPS: {quickAnalysisData.eps > 0 ? quickAnalysisData.eps.toFixed(2) : '--'}</div>
+                              </div>
+                            </div>
+                            {/* 流动性 */}
+                            <div style={{ padding: '8px 10px', background: 'rgba(34,197,94,0.03)' }}>
+                              <div style={{ fontWeight: 600, color: '#22c55e', marginBottom: 4, fontSize: 11 }}>💧 流动性</div>
+                              <div style={{ color: '#334155', lineHeight: 1.6 }}>
+                                <div>最新价: {quickAnalysisData.current_price > 0 ? quickAnalysisData.current_price.toFixed(2) : '--'}</div>
+                                <div>涨跌: <span style={{ color: quickAnalysisData.change_percent > 0 ? '#ef4444' : quickAnalysisData.change_percent < 0 ? '#22c55e' : '#94a3b8' }}>{quickAnalysisData.change_percent > 0 ? '+' : ''}{quickAnalysisData.change_percent?.toFixed(2) || '--'}%</span></div>
+                                <div>换手: {quickAnalysisData.turnover_rate > 0 ? quickAnalysisData.turnover_rate.toFixed(2) + '%' : '--'} · 量比: {quickAnalysisData.volume_ratio > 0 ? quickAnalysisData.volume_ratio.toFixed(2) : '--'}</div>
+                                {quickAnalysisData.has_moneyflow_data ? (
+                                  <>
+                                    <div style={{ fontWeight: 600 }}>主力净流入: <span style={{ color: quickAnalysisData.main_inflow > 0 ? '#ef4444' : quickAnalysisData.main_inflow < 0 ? '#22c55e' : '#94a3b8' }}>{quickAnalysisData.main_inflow > 0 ? '+' : ''}{quickAnalysisData.main_inflow.toFixed(0)}万元</span></div>
+                                    <div style={{ fontSize: 10, color: '#64748b', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                      <span>超大单: <span style={{ color: quickAnalysisData.elg_net_amount > 0 ? '#ef4444' : '#22c55e' }}>{quickAnalysisData.elg_net_amount > 0 ? '+' : ''}{quickAnalysisData.elg_net_amount.toFixed(0)}万元</span></span>
+                                      <span>大单: <span style={{ color: quickAnalysisData.lg_net_amount > 0 ? '#ef4444' : '#22c55e' }}>{quickAnalysisData.lg_net_amount > 0 ? '+' : ''}{quickAnalysisData.lg_net_amount.toFixed(0)}万元</span></span>
+                                      <span>中单: <span style={{ color: quickAnalysisData.md_net_amount > 0 ? '#ef4444' : '#22c55e' }}>{quickAnalysisData.md_net_amount > 0 ? '+' : ''}{quickAnalysisData.md_net_amount.toFixed(0)}万元</span></span>
+                                      <span>小单: <span style={{ color: quickAnalysisData.sm_net_amount > 0 ? '#ef4444' : '#22c55e' }}>{quickAnalysisData.sm_net_amount > 0 ? '+' : ''}{quickAnalysisData.sm_net_amount.toFixed(0)}万元</span></span>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div>主力净流入: {quickAnalysisData.main_inflow > 0 ? (quickAnalysisData.main_inflow/10000).toFixed(2) + '亿元' : '--'}<span style={{ fontSize: 10, color: '#94a3b8', marginLeft: 4 }}>(估算)</span></div>
+                                )}
+                              </div>
+                            </div>
+                            {/* 舆情 */}
+                            <div style={{ padding: '8px 10px', background: 'rgba(168,85,247,0.03)' }}>
+                              <div style={{ fontWeight: 600, color: '#a855f7', marginBottom: 4, fontSize: 11 }}>💬 舆情</div>
+                              <div style={{ color: '#334155', lineHeight: 1.6 }}>
+                                {quickAnalysisData.has_sentiment_data ? (
+                                  <>
+                                    <div>情绪得分: {quickAnalysisData.sentiment_score > 0 ? '+' : ''}{quickAnalysisData.sentiment_score?.toFixed(1) || '--'}</div>
+                                    <div>热度: {quickAnalysisData.sentiment_heat || '--'}</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
+                                      {quickAnalysisData.sentiment_keywords?.slice(0, 4).map((kw: string, i: number) => (
+                                        <span key={i} style={{ fontSize: 10, background: 'rgba(168,85,247,0.1)', color: '#7e22ce', padding: '1px 4px', borderRadius: 3 }}>{kw}</span>
+                                      ))}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <div style={{ color: '#94a3b8' }}>舆情数据暂不可用</div>
+                                )}
+                              </div>
+                            </div>
+                            {/* 风口关联 */}
+                            <div style={{ padding: '8px 10px', background: 'rgba(249,115,22,0.03)' }}>
+                              <div style={{ fontWeight: 600, color: '#f97316', marginBottom: 4, fontSize: 11 }}>🌪️ 风口关联</div>
+                              <div style={{ color: '#334155', lineHeight: 1.6 }}>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 4 }}>
+                                  {quickAnalysisData.concepts?.slice(0, 5).map((c: string, i: number) => (
+                                    <span key={i} style={{ fontSize: 10, background: 'rgba(249,115,22,0.1)', color: '#c2410c', padding: '1px 4px', borderRadius: 3 }}>{c}</span>
+                                  )) || <span style={{ color: '#94a3b8' }}>--</span>}
+                                </div>
+                                {quickAnalysisData.concept_match && quickAnalysisData.concept_match.length > 0 && (
+                                  <div style={{ fontSize: 11, color: '#ef4444' }}>
+                                    🔥 当前热点匹配: {quickAnalysisData.concept_match.join('、')}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 错误提示 */}
+                          {quickAnalysisData.errors && quickAnalysisData.errors.length > 0 && (
+                            <div style={{ padding: '4px 10px', fontSize: 11, color: '#ef4444', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+                              {quickAnalysisData.errors.map((e: string, i: number) => (
+                                <div key={i}>⚠️ {e}</div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+        )}
+
+        {!hotPanelOpen && (<>
         <div className="report-tabs">
           <div className="report-tabs-left">
             {selectedStock && (
@@ -2523,6 +3094,12 @@ function App() {
             </div>
           )}
         </div>
+        </>)}
+        {hotPanelOpen && !selectedHotConceptCode && (
+          <div className="placeholder">
+            <p>请选择热点概念查看成分股</p>
+          </div>
+        )}
       </section>
 
       {/* 点击空白处关闭下拉 */}

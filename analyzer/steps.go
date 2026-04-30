@@ -16,9 +16,9 @@ func step1Audit(data *FinancialData) StepResult {
 	// 目前无审计数据源，提示用户手动确认
 	for _, year := range data.Years {
 		result.YearlyData[year] = map[string]any{
-			"opinion":   "请查询年报确认",
-			"auditor":   "请查询年报确认",
-			"isTop10":   "待确认",
+			"opinion":    "请查询年报确认",
+			"auditor":    "请查询年报确认",
+			"isTop10":    "待确认",
 			"isStandard": "待确认",
 		}
 		result.Pass[year] = true // 默认不卡审计（避免无数据时直接淘汰）
@@ -100,11 +100,11 @@ func step3Solvency(data *FinancialData) StepResult {
 		diff := quasiCash - interestBearing
 
 		result.YearlyData[year] = map[string]any{
-			"debtRatio":      debtRatio,
-			"riskLevel":      riskLevel,
-			"quasiCash":      quasiCash,
+			"debtRatio":       debtRatio,
+			"riskLevel":       riskLevel,
+			"quasiCash":       quasiCash,
 			"interestBearing": interestBearing,
-			"cashDebtDiff":   diff,
+			"cashDebtDiff":    diff,
 		}
 		result.Pass[year] = debtRatio <= 60 && diff >= 0
 
@@ -484,9 +484,9 @@ func step11OperationEfficiency(data *FinancialData) StepResult {
 				Year:      year,
 				Formula:   "营业收入 / [(本年资产合计 + 上年资产合计) / 2]",
 				Inputs: map[string]InputValue{
-					"revenue":  {Source: "利润表", Item: "营业收入", Year: year, Value: revenue},
-					"asset":    {Source: "资产负债表", Item: "资产合计", Year: year, Value: asset},
-					"prevAsset":{Source: "资产负债表", Item: "资产合计", Year: "上一年", Value: prevAsset},
+					"revenue":   {Source: "利润表", Item: "营业收入", Year: year, Value: revenue},
+					"asset":     {Source: "资产负债表", Item: "资产合计", Year: year, Value: asset},
+					"prevAsset": {Source: "资产负债表", Item: "资产合计", Year: "上一年", Value: prevAsset},
 				},
 				Steps: []CalcStep{
 					{Desc: "计算平均总资产", Expr: fmt.Sprintf("(%.0f + %.0f) / 2", asset, prevAsset), Value: avgAsset},

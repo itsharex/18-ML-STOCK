@@ -286,9 +286,9 @@ func (s *Storage) DeleteReport(symbol, filename string) error {
 
 // AnalysisCache 分析缓存元数据
 type AnalysisCache struct {
-	DataHash       string `json:"dataHash"`
+	DataHash        string `json:"dataHash"`
 	ComparablesHash string `json:"comparablesHash"`
-	LastAnalysisAt string `json:"lastAnalysisAt"`
+	LastAnalysisAt  string `json:"lastAnalysisAt"`
 }
 
 // SaveAnalysisCache 保存分析缓存
@@ -728,7 +728,7 @@ func (s *Storage) RIMCachePath(symbol string) string {
 
 // rimCacheWrapper 带时间戳的RIM缓存包装器
 type rimCacheWrapper struct {
-	Timestamp time.Time              `json:"timestamp"`
+	Timestamp time.Time                   `json:"timestamp"`
 	Data      *downloader.RIMExternalData `json:"data"`
 }
 
@@ -808,4 +808,185 @@ func (s *Storage) DeleteSnapshot(symbol string) error {
 		return err
 	}
 	return nil
+}
+
+// ========== 热门概念/风口数据存储 ==========
+
+// HotConceptDir 返回热点数据根目录
+func (s *Storage) HotConceptDir() string {
+	return filepath.Join(s.dataDir, "hot_concepts")
+}
+
+// HotConceptLatestPath 返回当日热点缓存路径
+func (s *Storage) HotConceptLatestPath() string {
+	return filepath.Join(s.HotConceptDir(), "latest.json")
+}
+
+// HotConceptHistoryPath 返回某日期历史热点路径
+func (s *Storage) HotConceptHistoryPath(date string) string {
+	return filepath.Join(s.HotConceptDir(), "history", date+".json")
+}
+
+// SaveHotConceptBoard 保存热点看板数据（同时归档历史）
+func (s *Storage) SaveHotConceptBoard(board *downloader.HotConceptBoard) error {
+	// 保存最新缓存
+	latestPath := s.HotConceptLatestPath()
+	if err := os.MkdirAll(filepath.Dir(latestPath), 0755); err != nil {
+		return fmt.Errorf("创建热点缓存目录失败: %w", err)
+	}
+	data, err := json.MarshalIndent(board, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化热点数据失败: %w", err)
+	}
+	if err := os.WriteFile(latestPath, data, 0644); err != nil {
+		return fmt.Errorf("写入热点缓存失败: %w", err)
+	}
+
+	// 归档到历史
+	historyPath := s.HotConceptHistoryPath(board.Date)
+	if err := os.MkdirAll(filepath.Dir(historyPath), 0755); err != nil {
+		return fmt.Errorf("创建热点历史目录失败: %w", err)
+	}
+	if err := os.WriteFile(historyPath, data, 0644); err != nil {
+		return fmt.Errorf("写入热点历史失败: %w", err)
+	}
+
+	return nil
+}
+
+// LoadHotConceptBoard 加载指定日期的热点看板数据
+// date 为空字符串时读取最新缓存
+func (s *Storage) LoadHotConceptBoard(date string) (*downloader.HotConceptBoard, error) {
+	var path string
+	if date == "" {
+		path = s.HotConceptLatestPath()
+	} else {
+		path = s.HotConceptHistoryPath(date)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var board downloader.HotConceptBoard
+	if err := json.Unmarshal(data, &board); err != nil {
+		return nil, fmt.Errorf("解析热点数据失败: %w", err)
+	}
+	return &board, nil
+}
+
+// ListHotConceptHistory 列出可用的历史日期列表（降序）
+func (s *Storage) ListHotConceptHistory(maxDays int) ([]string, error) {
+	historyDir := filepath.Join(s.HotConceptDir(), "history")
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []string{}, nil
+		}
+		return nil, err
+	}
+
+	var dates []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".json") {
+			dates = append(dates, strings.TrimSuffix(name, ".json"))
+		}
+	}
+	// 降序排列
+	sort.Slice(dates, func(i, j int) bool {
+		return dates[i] > dates[j]
+	})
+	if maxDays > 0 && len(dates) > maxDays {
+		dates = dates[:maxDays]
+	}
+	return dates, nil
+}
+
+// CleanOldHotConceptHistory 清理超过 maxDays 天的历史数据
+func (s *Storage) CleanOldHotConceptHistory(maxDays int) error {
+	historyDir := filepath.Join(s.HotConceptDir(), "history")
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	cutoff := time.Now().AddDate(0, 0, -maxDays)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		dateStr := strings.TrimSuffix(name, ".json")
+		t, err := time.Parse("2006-01-02", dateStr)
+		if err != nil {
+			continue
+		}
+		if t.Before(cutoff) {
+			_ = os.Remove(filepath.Join(historyDir, name))
+		}
+	}
+	return nil
+}
+
+// ========== Tushare 配置存储 ==========
+
+// TushareConfig Tushare 数据源配置
+type TushareConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Token          string `json:"token"`
+	Verified       bool   `json:"verified"`
+	VerifiedAt     string `json:"verified_at"`
+	UseForFinancial bool  `json:"use_for_financial"`
+	UseForKline     bool  `json:"use_for_kline"`
+	UseForQuote     bool  `json:"use_for_quote"`
+	UseForMoneyflow bool  `json:"use_for_moneyflow"`
+}
+
+// TushareConfigPath 返回 Tushare 配置文件路径
+func (s *Storage) TushareConfigPath() string {
+	return filepath.Join(s.dataDir, "tushare_config.json")
+}
+
+// LoadTushareConfig 加载 Tushare 配置
+func (s *Storage) LoadTushareConfig() (*TushareConfig, error) {
+	path := s.TushareConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &TushareConfig{
+				Enabled:         false,
+				UseForFinancial: true,
+				UseForKline:     true,
+				UseForQuote:     true,
+				UseForMoneyflow: true,
+			}, nil
+		}
+		return nil, err
+	}
+	var cfg TushareConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("解析 Tushare 配置失败: %w", err)
+	}
+	return &cfg, nil
+}
+
+// SaveTushareConfig 保存 Tushare 配置
+func (s *Storage) SaveTushareConfig(cfg *TushareConfig) error {
+	path := s.TushareConfigPath()
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化 Tushare 配置失败: %w", err)
+	}
+	return os.WriteFile(path, data, 0644)
 }

@@ -54,19 +54,19 @@ func DownloadFinancialReports(market, code string, maxYears ...int) (*FinancialR
 		}
 		return nil, fmt.Errorf("港股财报下载失败:\n%v\n\n建议:\n1. 检查网络连接\n2. 确保已安装 akshare\n3. 使用CSV导入功能手动导入财报数据", err)
 	}
-	
+
 	// 先尝试东方财富
 	result, err := downloadFromEastMoney(market, code, limit)
 	if err == nil {
 		return result, nil
 	}
-	
+
 	// 东方财富失败，尝试腾讯财经
 	result, err2 := DownloadFromTencent(market, code)
 	if err2 == nil {
 		return result, nil
 	}
-	
+
 	// 都失败了，返回详细错误信息
 	return nil, fmt.Errorf("下载失败:\n\n【东方财富】%v\n\n【腾讯财经】%v\n\n建议:\n1. 检查网络连接\n2. 稍后重试\n3. 使用CSV导入功能手动导入财报数据", err, err2)
 }
@@ -166,12 +166,12 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 	}
 
 	wg.Wait()
-	
+
 	// 只要有部分数据成功就返回，不完全失败
 	if successCount == 0 {
 		return nil, fmt.Errorf("下载失败，所有年份数据均无法获取:\n%s", strings.Join(errs, "\n"))
 	}
-	
+
 	// 如果有部分失败，记录日志但不阻止返回
 	if len(errs) > 0 {
 		// 可以在这里添加日志记录
@@ -185,7 +185,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
 	companyTypes := []int{4, 1, 2, 3, 5, 6, 7, 8}
 	var lastErr error
-	
+
 	for _, ct := range companyTypes {
 		data, err := fetchHSF10(endpoint, ct, "2024-12-31", fullCode)
 		if err != nil {
@@ -196,7 +196,7 @@ func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
 			return ct, nil
 		}
 	}
-	
+
 	if lastErr != nil {
 		return 0, fmt.Errorf("无法确定companyType(已尝试类型%v): %w", companyTypes, lastErr)
 	}
@@ -207,10 +207,10 @@ func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
 func getAnnualReportDates(code string, maxYears int) ([]string, error) {
 	url := fmt.Sprintf("%s?sortColumns=REPORT_DATE&sortTypes=-1&pageSize=500&pageNumber=1&reportName=RPT_DMSK_FN_BALANCE&columns=REPORT_DATE&source=WEB&filter=(SECURITY_CODE=\"%s\")", dcBaseURL, code)
 	url = strings.ReplaceAll(url, `"`, "%22")
-	
+
 	var resp []byte
 	var err error
-	
+
 	// 尝试主API
 	resp, err = httpGetWithReferer(url, "https://data.eastmoney.com/")
 	if err != nil {
@@ -379,19 +379,19 @@ type StockProfile struct {
 
 // StockQuote 股票实时行情
 type StockQuote struct {
-	CurrentPrice         float64 `json:"currentPrice"`
-	ChangePercent        float64 `json:"changePercent"`
-	ChangeAmount         float64 `json:"changeAmount"`
-	Volume               float64 `json:"volume"`
-	TurnoverAmount       float64 `json:"turnoverAmount"`
-	TurnoverRate         float64 `json:"turnoverRate"`
-	Amplitude            float64 `json:"amplitude"`
-	High                 float64 `json:"high"`
-	Low                  float64 `json:"low"`
-	Open                 float64 `json:"open"`
-	PreviousClose        float64 `json:"previousClose"`
-	CirculatingMarketCap float64 `json:"circulatingMarketCap"`
-	VolumeRatio          float64 `json:"volumeRatio"`
+	CurrentPrice          float64 `json:"currentPrice"`
+	ChangePercent         float64 `json:"changePercent"`
+	ChangeAmount          float64 `json:"changeAmount"`
+	Volume                float64 `json:"volume"`
+	TurnoverAmount        float64 `json:"turnoverAmount"`
+	TurnoverRate          float64 `json:"turnoverRate"`
+	Amplitude             float64 `json:"amplitude"`
+	High                  float64 `json:"high"`
+	Low                   float64 `json:"low"`
+	Open                  float64 `json:"open"`
+	PreviousClose         float64 `json:"previousClose"`
+	CirculatingMarketCap  float64 `json:"circulatingMarketCap"`
+	VolumeRatio           float64 `json:"volumeRatio"`
 	PE                    float64 `json:"pe"`
 	PB                    float64 `json:"pb"`
 	DividendYield         float64 `json:"dividendYield"`
@@ -732,8 +732,20 @@ func inferNationalityFromBaike(name string) string {
 	return ""
 }
 
-// FetchStockQuote 从东方财富获取股票实时行情，若失败则 fallback 到腾讯财经接口
+// FetchStockQuote 获取股票实时行情，先尝试腾讯财经，再东方财富
 func FetchStockQuote(market, code string) (*StockQuote, error) {
+	// 1. 腾讯财经（当前网络环境下最稳定）
+	fmt.Printf("[FetchStockQuote] trying Tencent for %s.%s\n", market, code)
+	quote, err := fetchQuoteFromTencent(market, code)
+	if err == nil && quote != nil && quote.CurrentPrice > 0 {
+		fmt.Printf("[FetchStockQuote] Tencent returned quote for %s.%s, price=%.2f\n", market, code, quote.CurrentPrice)
+		return quote, nil
+	}
+	if err != nil {
+		fmt.Printf("[FetchStockQuote] Tencent failed for %s.%s: %v\n", market, code, err)
+	}
+
+	// 2. 东方财富（当前网络环境下可能被屏蔽）
 	var secid string
 	switch strings.ToUpper(market) {
 	case "SH":
@@ -746,6 +758,7 @@ func FetchStockQuote(market, code string) (*StockQuote, error) {
 		secid = "0." + code
 	}
 	url := fmt.Sprintf("http://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f2,f3,f4,f5,f6,f7,f8,f10,f15,f16,f17,f18,f20,f21,f9,f23,f133", secid)
+	fmt.Printf("[FetchStockQuote] trying EastMoney: %s\n", url)
 	body, err := httpGetWithReferer(url, "https://quote.eastmoney.com/")
 	if err == nil {
 		var resp struct {
@@ -769,15 +782,20 @@ func FetchStockQuote(market, code string) (*StockQuote, error) {
 			quote.CirculatingMarketCap = parseAnyFloat(resp.Data["f21"]) * 1e8
 			quote.PE = parseAnyFloat(resp.Data["f9"])
 			quote.PB = parseAnyFloat(resp.Data["f23"])
-				quote.DividendYield = parseAnyFloat(resp.Data["f133"]) / 100 // 接口返回百分比数值，转为小数
+			quote.DividendYield = parseAnyFloat(resp.Data["f133"]) / 100
 			if quote.CurrentPrice > 0 {
+				fmt.Printf("[FetchStockQuote] EastMoney returned quote for %s.%s, price=%.2f\n", market, code, quote.CurrentPrice)
 				return quote, nil
 			}
+			fmt.Printf("[FetchStockQuote] EastMoney returned invalid quote for %s.%s (price=0)\n", market, code)
+		} else {
+			fmt.Printf("[FetchStockQuote] EastMoney unmarshal fail for %s.%s\n", market, code)
 		}
+	} else {
+		fmt.Printf("[FetchStockQuote] EastMoney request error for %s.%s: %v\n", market, code, err)
 	}
 
-	// fallback 到腾讯财经接口
-	return fetchQuoteFromTencent(market, code)
+	return nil, fmt.Errorf("所有行情数据源均不可用 (腾讯/东财)")
 }
 
 func fetchQuoteFromTencent(market, code string) (*StockQuote, error) {
@@ -863,10 +881,10 @@ func fetchQuoteFromTencent(market, code string) (*StockQuote, error) {
 	if !isHK && len(parts) > 49 {
 		quote.VolumeRatio = parseStrFloat(parts[49])
 	}
-		// 股息率：腾讯接口 parts[62] 为股息率（百分比数值）
-		if len(parts) > 62 {
-			quote.DividendYield = parseStrFloat(parts[62]) / 100
-		}
+	// 股息率：腾讯接口 parts[62] 为股息率（百分比数值）
+	if len(parts) > 62 {
+		quote.DividendYield = parseStrFloat(parts[62]) / 100
+	}
 	// 时间格式：A股为 YYYYMMDDHHMMSS(14位)，港股为 YYYY/MM/DD HH:MM:SS
 	if len(parts) > 30 && parts[30] != "" {
 		timeStr := parts[30]
@@ -937,7 +955,7 @@ func fetchHKProfileFromPython(code string) (*hkProfileResult, error) {
 	python := resolvePythonExecutable()
 	cmd := exec.Command(python, script, code)
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	// Windows: 隐藏 CMD 窗口
 	setHideWindow(cmd)
 
@@ -954,12 +972,12 @@ func fetchHKProfileFromPython(code string) (*hkProfileResult, error) {
 
 // hkFinancialsResult Python 脚本返回的港股财务数据
 type hkFinancialsResult struct {
-	Symbol          string                            `json:"symbol"`
-	Years           []string                          `json:"years"`
-	BalanceSheet    map[string]map[string]float64     `json:"balanceSheet"`
-	IncomeStatement map[string]map[string]float64     `json:"incomeStatement"`
-	CashFlow        map[string]map[string]float64     `json:"cashFlow"`
-	Errors          []string                          `json:"errors"`
+	Symbol          string                        `json:"symbol"`
+	Years           []string                      `json:"years"`
+	BalanceSheet    map[string]map[string]float64 `json:"balanceSheet"`
+	IncomeStatement map[string]map[string]float64 `json:"incomeStatement"`
+	CashFlow        map[string]map[string]float64 `json:"cashFlow"`
+	Errors          []string                      `json:"errors"`
 }
 
 // fetchHKFinancialsScriptPath 返回 fetch_hk_financials.py 绝对路径
@@ -987,7 +1005,7 @@ func fetchHKFinancialsFromPython(code string, maxYears int) (*FinancialReportDat
 	python := resolvePythonExecutable()
 	cmd := exec.Command(python, script, code, fmt.Sprintf("%d", maxYears))
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	setHideWindow(cmd)
 
 	output, err := cmd.CombinedOutput()
@@ -1038,8 +1056,31 @@ type KlineData struct {
 	TurnoverRate float64 `json:"turnoverRate"` // 换手率（%）
 }
 
-// FetchStockKlines 获取股票历史K线数据（日K），先尝试东方财富，再腾讯财经，再网易财经
+// FetchStockKlines 获取股票历史K线数据（日K），先尝试腾讯财经，再网易财经，最后东方财富
 func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
+	// 1. 腾讯财经 HTTPS（当前网络环境下最稳定）
+	fmt.Printf("[FetchStockKlines] trying Tencent for %s.%s, limit=%d\n", market, code, limit)
+	klines, err := fetchKlinesFromTencent(market, code, limit)
+	if err == nil && len(klines) > 0 {
+		fmt.Printf("[FetchStockKlines] Tencent returned %d klines for %s.%s\n", len(klines), market, code)
+		return klines, nil
+	}
+	if err != nil {
+		fmt.Printf("[FetchStockKlines] Tencent failed for %s.%s: %v\n", market, code, err)
+	}
+
+	// 2. 网易财经 CSV
+	fmt.Printf("[FetchStockKlines] trying NetEase for %s.%s\n", market, code)
+	klines, err = fetchKlinesFromNetEase(market, code, limit)
+	if err == nil && len(klines) > 0 {
+		fmt.Printf("[FetchStockKlines] NetEase returned %d klines for %s.%s\n", len(klines), market, code)
+		return klines, nil
+	}
+	if err != nil {
+		fmt.Printf("[FetchStockKlines] NetEase failed for %s.%s: %v\n", market, code, err)
+	}
+
+	// 3. 东方财富 HTTPS（当前网络环境下可能被屏蔽）
 	var secid string
 	switch strings.ToUpper(market) {
 	case "SH":
@@ -1051,10 +1092,8 @@ func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
 	default:
 		secid = "0." + code
 	}
-
-	// 1. 东方财富 HTTPS（使用 push2his 域名与 akshare 一致的参数，fqt=1 前复权，rtntype=6 确保 fields2 生效）
 	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?ut=fa5fd1943c7b386f172d6893dbfba10b&secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116&klt=101&fqt=1&beg=0&end=20500101&rtntype=6&lmt=%d", secid, limit)
-	fmt.Printf("[FetchStockKlines] EastMoney URL: %s\n", url)
+	fmt.Printf("[FetchStockKlines] trying EastMoney: %s\n", url)
 	body, err := httpGetWithReferer(url, "https://quote.eastmoney.com/")
 	if err == nil {
 		var resp struct {
@@ -1065,25 +1104,17 @@ func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
 		if json.Unmarshal(body, &resp) == nil && len(resp.Data.Klines) > 0 {
 			fmt.Printf("[FetchStockKlines] EastMoney returned %d klines, first=%s\n", len(resp.Data.Klines), resp.Data.Klines[0])
 			return parseEastMoneyKlines(resp.Data.Klines), nil
-		} else {
-			prefixLen := 200
-			if len(body) < prefixLen {
-				prefixLen = len(body)
-			}
-			fmt.Printf("[FetchStockKlines] EastMoney unmarshal fail or empty klines, body prefix=%s\n", string(body)[:prefixLen])
 		}
+		prefixLen := 200
+		if len(body) < prefixLen {
+			prefixLen = len(body)
+		}
+		fmt.Printf("[FetchStockKlines] EastMoney unmarshal fail or empty klines, body prefix=%s\n", string(body)[:prefixLen])
 	} else {
 		fmt.Printf("[FetchStockKlines] EastMoney request error: %v\n", err)
 	}
 
-	// 2. 腾讯财经 HTTPS
-	klines, err := fetchKlinesFromTencent(market, code, limit)
-	if err == nil && len(klines) > 0 {
-		return klines, nil
-	}
-
-	// 3. 网易财经 CSV
-	return fetchKlinesFromNetEase(market, code, limit)
+	return nil, fmt.Errorf("所有K线数据源均不可用 (腾讯/网易/东财)")
 }
 
 func parseEastMoneyKlines(lines []string) []KlineData {
@@ -1236,8 +1267,8 @@ func fetchKlinesFromTencent(market, code string, limit int) ([]KlineData, error)
 		volume := volumeRaw
 		amount := close * volumeRaw * 100 // 成交额 = 收盘价 × 手 × 100
 		if isKCB {
-			volume = volumeRaw / 100    // 科创板：股 → 手
-			amount = close * volumeRaw  // 成交额 = 收盘价 × 股数
+			volume = volumeRaw / 100   // 科创板：股 → 手
+			amount = close * volumeRaw // 成交额 = 收盘价 × 股数
 		}
 		klines = append(klines, KlineData{
 			Time:   date,

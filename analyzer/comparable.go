@@ -23,20 +23,20 @@ type ComparableMetrics struct {
 
 // YearlyComparableMetrics 单一年度的可比公司指标集合
 type YearlyComparableMetrics struct {
-	Year     string                        `json:"year"`
-	Metrics  map[string]*ComparableMetrics `json:"metrics"`
-	Average  *ComparableMetrics            `json:"average"`
+	Year    string                        `json:"year"`
+	Metrics map[string]*ComparableMetrics `json:"metrics"`
+	Average *ComparableMetrics            `json:"average"`
 }
 
 // ComparableAnalysis 横向对比分析结果
 type ComparableAnalysis struct {
-	Metrics        map[string]*ComparableMetrics `json:"metrics"`
-	Average        *ComparableMetrics            `json:"average"`
-	Max            *ComparableMetrics            `json:"max"`
-	Min            *ComparableMetrics            `json:"min"`
-	HasData        bool                          `json:"hasData"`
-	YearlyTrends   []*YearlyComparableMetrics    `json:"yearlyTrends"`
-	CommonYears    []string                      `json:"commonYears"`
+	Metrics      map[string]*ComparableMetrics `json:"metrics"`
+	Average      *ComparableMetrics            `json:"average"`
+	Max          *ComparableMetrics            `json:"max"`
+	Min          *ComparableMetrics            `json:"min"`
+	HasData      bool                          `json:"hasData"`
+	YearlyTrends []*YearlyComparableMetrics    `json:"yearlyTrends"`
+	CommonYears  []string                      `json:"commonYears"`
 }
 
 // BuildComparableAnalysis 构建可比公司分析数据
@@ -251,14 +251,30 @@ func calcMax(metrics map[string]*ComparableMetrics) *ComparableMetrics {
 			first = false
 			continue
 		}
-		if m.ROE > max.ROE { max.ROE = m.ROE }
-		if m.GrossMargin > max.GrossMargin { max.GrossMargin = m.GrossMargin }
-		if m.RevenueGrowth > max.RevenueGrowth { max.RevenueGrowth = m.RevenueGrowth }
-		if m.DebtRatio > max.DebtRatio { max.DebtRatio = m.DebtRatio }
-		if m.CashRatio > max.CashRatio { max.CashRatio = m.CashRatio }
-		if m.MScore > max.MScore { max.MScore = m.MScore }
-		if m.AScore > max.AScore { max.AScore = m.AScore }
-		if m.ActivityScore >= 0 && (max.ActivityScore < 0 || m.ActivityScore > max.ActivityScore) { max.ActivityScore = m.ActivityScore }
+		if m.ROE > max.ROE {
+			max.ROE = m.ROE
+		}
+		if m.GrossMargin > max.GrossMargin {
+			max.GrossMargin = m.GrossMargin
+		}
+		if m.RevenueGrowth > max.RevenueGrowth {
+			max.RevenueGrowth = m.RevenueGrowth
+		}
+		if m.DebtRatio > max.DebtRatio {
+			max.DebtRatio = m.DebtRatio
+		}
+		if m.CashRatio > max.CashRatio {
+			max.CashRatio = m.CashRatio
+		}
+		if m.MScore > max.MScore {
+			max.MScore = m.MScore
+		}
+		if m.AScore > max.AScore {
+			max.AScore = m.AScore
+		}
+		if m.ActivityScore >= 0 && (max.ActivityScore < 0 || m.ActivityScore > max.ActivityScore) {
+			max.ActivityScore = m.ActivityScore
+		}
 	}
 	return max
 }
@@ -276,14 +292,30 @@ func calcMin(metrics map[string]*ComparableMetrics) *ComparableMetrics {
 			first = false
 			continue
 		}
-		if m.ROE < min.ROE { min.ROE = m.ROE }
-		if m.GrossMargin < min.GrossMargin { min.GrossMargin = m.GrossMargin }
-		if m.RevenueGrowth < min.RevenueGrowth { min.RevenueGrowth = m.RevenueGrowth }
-		if m.DebtRatio < min.DebtRatio { min.DebtRatio = m.DebtRatio }
-		if m.CashRatio < min.CashRatio { min.CashRatio = m.CashRatio }
-		if m.MScore < min.MScore { min.MScore = m.MScore }
-		if m.AScore < min.AScore { min.AScore = m.AScore }
-		if m.ActivityScore >= 0 && (min.ActivityScore < 0 || m.ActivityScore < min.ActivityScore) { min.ActivityScore = m.ActivityScore }
+		if m.ROE < min.ROE {
+			min.ROE = m.ROE
+		}
+		if m.GrossMargin < min.GrossMargin {
+			min.GrossMargin = m.GrossMargin
+		}
+		if m.RevenueGrowth < min.RevenueGrowth {
+			min.RevenueGrowth = m.RevenueGrowth
+		}
+		if m.DebtRatio < min.DebtRatio {
+			min.DebtRatio = m.DebtRatio
+		}
+		if m.CashRatio < min.CashRatio {
+			min.CashRatio = m.CashRatio
+		}
+		if m.MScore < min.MScore {
+			min.MScore = m.MScore
+		}
+		if m.AScore < min.AScore {
+			min.AScore = m.AScore
+		}
+		if m.ActivityScore >= 0 && (min.ActivityScore < 0 || m.ActivityScore < min.ActivityScore) {
+			min.ActivityScore = m.ActivityScore
+		}
 	}
 	return min
 }
@@ -298,13 +330,20 @@ func RankPercentile(metrics map[string]*ComparableMetrics, target *ComparableMet
 	for s, m := range metrics {
 		var v float64
 		switch key {
-		case "roe": v = m.ROE
-		case "grossMargin": v = m.GrossMargin
-		case "revenueGrowth": v = m.RevenueGrowth
-		case "debtRatio": v = -m.DebtRatio // 负债率越低越好
-		case "cashRatio": v = m.CashRatio
-		case "mScore": v = -m.MScore // MScore 越低越好
-		case "aScore": v = -m.AScore // AScore 越低越好
+		case "roe":
+			v = m.ROE
+		case "grossMargin":
+			v = m.GrossMargin
+		case "revenueGrowth":
+			v = m.RevenueGrowth
+		case "debtRatio":
+			v = -m.DebtRatio // 负债率越低越好
+		case "cashRatio":
+			v = m.CashRatio
+		case "mScore":
+			v = -m.MScore // MScore 越低越好
+		case "aScore":
+			v = -m.AScore // AScore 越低越好
 		case "activityScore":
 			if m.ActivityScore >= 0 {
 				v = m.ActivityScore
@@ -329,13 +368,20 @@ func RankPercentile(metrics map[string]*ComparableMetrics, target *ComparableMet
 
 	var targetVal float64
 	switch key {
-	case "roe": targetVal = target.ROE
-	case "grossMargin": targetVal = target.GrossMargin
-	case "revenueGrowth": targetVal = target.RevenueGrowth
-	case "debtRatio": targetVal = -target.DebtRatio
-	case "cashRatio": targetVal = target.CashRatio
-	case "mScore": targetVal = -target.MScore
-	case "aScore": targetVal = -target.AScore
+	case "roe":
+		targetVal = target.ROE
+	case "grossMargin":
+		targetVal = target.GrossMargin
+	case "revenueGrowth":
+		targetVal = target.RevenueGrowth
+	case "debtRatio":
+		targetVal = -target.DebtRatio
+	case "cashRatio":
+		targetVal = target.CashRatio
+	case "mScore":
+		targetVal = -target.MScore
+	case "aScore":
+		targetVal = -target.AScore
 	case "activityScore":
 		if target.ActivityScore >= 0 {
 			targetVal = target.ActivityScore

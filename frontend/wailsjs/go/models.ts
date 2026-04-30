@@ -446,6 +446,110 @@ export namespace analyzer {
 
 export namespace downloader {
 	
+	export class ConceptConstituent {
+	    code: string;
+	    name: string;
+	    market: string;
+	    change_pct: number;
+	    price: number;
+	    main_inflow: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConceptConstituent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.market = source["market"];
+	        this.change_pct = source["change_pct"];
+	        this.price = source["price"];
+	        this.main_inflow = source["main_inflow"];
+	    }
+	}
+	export class HotConcept {
+	    code: string;
+	    name: string;
+	    change_pct: number;
+	    change_amt: number;
+	    volume: number;
+	    turnover: number;
+	    main_inflow: number;
+	    main_in_ratio: number;
+	    top_stock: string;
+	    top_stock_code: string;
+	    score: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HotConcept(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.change_pct = source["change_pct"];
+	        this.change_amt = source["change_amt"];
+	        this.volume = source["volume"];
+	        this.turnover = source["turnover"];
+	        this.main_inflow = source["main_inflow"];
+	        this.main_in_ratio = source["main_in_ratio"];
+	        this.top_stock = source["top_stock"];
+	        this.top_stock_code = source["top_stock_code"];
+	        this.score = source["score"];
+	    }
+	}
+	export class HotConceptBoard {
+	    date: string;
+	    updated_at: string;
+	    concepts: HotConcept[];
+	    data_source: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HotConceptBoard(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.updated_at = source["updated_at"];
+	        this.concepts = this.convertValues(source["concepts"], HotConcept);
+	        this.data_source = source["data_source"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class HotConceptHistoryItem {
+	    date: string;
+	    top_names: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new HotConceptHistoryItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.top_names = source["top_names"];
+	    }
+	}
 	export class IndustryUpdateResult {
 	    success: boolean;
 	    path: string;
@@ -632,6 +736,7 @@ export namespace main {
 	    message: string;
 	    years: string[];
 	    validation: downloader.ValidationResult[];
+	    sourceName: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DownloadResult(source);
@@ -643,6 +748,7 @@ export namespace main {
 	        this.message = source["message"];
 	        this.years = source["years"];
 	        this.validation = this.convertValues(source["validation"], downloader.ValidationResult);
+	        this.sourceName = source["sourceName"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -838,6 +944,68 @@ export namespace main {
 		}
 	}
 	
+	export class QuickAnalysis {
+	    code: string;
+	    name: string;
+	    symbol: string;
+	    market: string;
+	    current_price: number;
+	    change_percent: number;
+	    turnover_rate: number;
+	    volume_ratio: number;
+	    has_moneyflow_data: boolean;
+	    main_inflow: number;
+	    sm_net_amount: number;
+	    md_net_amount: number;
+	    lg_net_amount: number;
+	    elg_net_amount: number;
+	    industry: string;
+	    market_cap: number;
+	    pe: number;
+	    pb: number;
+	    eps: number;
+	    sentiment_score: number;
+	    sentiment_heat: number;
+	    sentiment_keywords: string[];
+	    has_sentiment_data: boolean;
+	    concepts: string[];
+	    concept_match: string[];
+	    errors: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new QuickAnalysis(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.symbol = source["symbol"];
+	        this.market = source["market"];
+	        this.current_price = source["current_price"];
+	        this.change_percent = source["change_percent"];
+	        this.turnover_rate = source["turnover_rate"];
+	        this.volume_ratio = source["volume_ratio"];
+	        this.has_moneyflow_data = source["has_moneyflow_data"];
+	        this.main_inflow = source["main_inflow"];
+	        this.sm_net_amount = source["sm_net_amount"];
+	        this.md_net_amount = source["md_net_amount"];
+	        this.lg_net_amount = source["lg_net_amount"];
+	        this.elg_net_amount = source["elg_net_amount"];
+	        this.industry = source["industry"];
+	        this.market_cap = source["market_cap"];
+	        this.pe = source["pe"];
+	        this.pb = source["pb"];
+	        this.eps = source["eps"];
+	        this.sentiment_score = source["sentiment_score"];
+	        this.sentiment_heat = source["sentiment_heat"];
+	        this.sentiment_keywords = source["sentiment_keywords"];
+	        this.has_sentiment_data = source["has_sentiment_data"];
+	        this.concepts = source["concepts"];
+	        this.concept_match = source["concept_match"];
+	        this.errors = source["errors"];
+	    }
+	}
 	export class StockInfo {
 	    code: string;
 	    name: string;
@@ -853,6 +1021,64 @@ export namespace main {
 	        this.name = source["name"];
 	        this.market = source["market"];
 	    }
+	}
+	export class StockMoneyflowItem {
+	    date: string;
+	    main_inflow: number;
+	    sm_net_amount: number;
+	    md_net_amount: number;
+	    lg_net_amount: number;
+	    elg_net_amount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new StockMoneyflowItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.main_inflow = source["main_inflow"];
+	        this.sm_net_amount = source["sm_net_amount"];
+	        this.md_net_amount = source["md_net_amount"];
+	        this.lg_net_amount = source["lg_net_amount"];
+	        this.elg_net_amount = source["elg_net_amount"];
+	    }
+	}
+	export class StockMoneyflowResult {
+	    symbol: string;
+	    items: StockMoneyflowItem[];
+	    has_data: boolean;
+	    summary: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new StockMoneyflowResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.symbol = source["symbol"];
+	        this.items = this.convertValues(source["items"], StockMoneyflowItem);
+	        this.has_data = source["has_data"];
+	        this.summary = source["summary"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class StockProfile {
 	    industry: string;
@@ -892,6 +1118,46 @@ export namespace main {
 	        this.chairmanHoldRatio = source["chairmanHoldRatio"];
 	        this.politicalAffiliation = source["politicalAffiliation"];
 	        this.updatedAt = source["updatedAt"];
+	    }
+	}
+	export class TushareConfig {
+	    enabled: boolean;
+	    token: string;
+	    verified: boolean;
+	    verified_at: string;
+	    use_for_financial: boolean;
+	    use_for_kline: boolean;
+	    use_for_quote: boolean;
+	    use_for_moneyflow: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TushareConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.token = source["token"];
+	        this.verified = source["verified"];
+	        this.verified_at = source["verified_at"];
+	        this.use_for_financial = source["use_for_financial"];
+	        this.use_for_kline = source["use_for_kline"];
+	        this.use_for_quote = source["use_for_quote"];
+	        this.use_for_moneyflow = source["use_for_moneyflow"];
+	    }
+	}
+	export class TushareVerifyResult {
+	    success: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TushareVerifyResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
 	    }
 	}
 	export class WatchlistActivitySummary {

@@ -8,13 +8,13 @@ import (
 // RiskRadarItem 单条风险雷达项
 type RiskRadarItem struct {
 	Name     string `json:"name"`
-	Level    string `json:"level"`   // high / medium / low
-	Status   string `json:"status"`  // 异常 / 警告 / 正常
+	Level    string `json:"level"`  // high / medium / low
+	Status   string `json:"status"` // 异常 / 警告 / 正常
 	Message  string `json:"message"`
-	Icon     string `json:"icon"`    // 🔴 / 🟡 / 🟢
-	Value    string `json:"value"`   // 当前值（如 "18.5%"）
+	Icon     string `json:"icon"`     // 🔴 / 🟡 / 🟢
+	Value    string `json:"value"`    // 当前值（如 "18.5%"）
 	Industry string `json:"industry"` // 行业均值（如 "7.8%"）
-	Desc     string `json:"desc"`    // 指标说明
+	Desc     string `json:"desc"`     // 指标说明
 }
 
 // BuildRiskRadar 从财报透视分析结果中提取最近一年的关键风险信号，并与行业均值对比

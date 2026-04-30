@@ -7,24 +7,23 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-
 )
 
 // RIMExternalData Python脚本返回的原始数据
 type RIMExternalData struct {
-	Symbol      string             `json:"symbol"`
-	EPSForecast map[string]float64 `json:"eps_forecast"`
-	EPSForecastError string        `json:"eps_forecast_error,omitempty"`
-	Rf          float64            `json:"rf"`
-	RfDate      string             `json:"rf_date,omitempty"`
-	RfError     string             `json:"rf_error,omitempty"`
-	Price       float64            `json:"price"`
-	TotalShares float64            `json:"total_shares"`
-	MarketCap   float64            `json:"market_cap"`
-	PB          float64            `json:"pb"`
-	Beta        float64            `json:"beta"`
-	RmRf        float64            `json:"rm_rf"`
-	Error       string             `json:"error,omitempty"`
+	Symbol           string             `json:"symbol"`
+	EPSForecast      map[string]float64 `json:"eps_forecast"`
+	EPSForecastError string             `json:"eps_forecast_error,omitempty"`
+	Rf               float64            `json:"rf"`
+	RfDate           string             `json:"rf_date,omitempty"`
+	RfError          string             `json:"rf_error,omitempty"`
+	Price            float64            `json:"price"`
+	TotalShares      float64            `json:"total_shares"`
+	MarketCap        float64            `json:"market_cap"`
+	PB               float64            `json:"pb"`
+	Beta             float64            `json:"beta"`
+	RmRf             float64            `json:"rm_rf"`
+	Error            string             `json:"error,omitempty"`
 }
 
 // findProjectRootByMarker 从 binary 所在目录向上查找项目根目录（通过指定标记文件）
@@ -59,7 +58,7 @@ func fetchRIMScriptPath() string {
 			return p
 		}
 	}
-	
+
 	_, b, _, _ := runtime.Caller(0)
 	base := filepath.Dir(b)
 	root := findProjectRootByMarker(base, filepath.Join("scripts", "fetch_rim_data.py"))
@@ -89,7 +88,7 @@ func resolvePythonExecutable() string {
 			return venvPython
 		}
 	}
-	
+
 	_, b, _, _ := runtime.Caller(0)
 	base := filepath.Dir(b)
 	root := findProjectRootByMarker(base, filepath.Join("scripts", "fetch_rim_data.py"))
@@ -128,7 +127,7 @@ func FetchRIMExternalData(symbol string) (*RIMExternalData, error) {
 	python := resolvePythonExecutable()
 	cmd := exec.Command(python, script)
 	cmd.Env = append(os.Environ(), "TQDM_DISABLE=1", "PYTHONUNBUFFERED=1")
-	
+
 	// Windows: 隐藏 CMD 窗口
 	setHideWindow(cmd)
 	stdin, err := cmd.StdinPipe()

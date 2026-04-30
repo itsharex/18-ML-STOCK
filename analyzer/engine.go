@@ -27,11 +27,11 @@ func RunAnalysisWithComparablesAndQuoteAndSentiment(baseDir, symbol string, comp
 
 // RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy 执行完整的财报透视分析，集成可比公司横向对比、实时行情、舆情情绪与政策匹配度
 func RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData) (*AnalysisReport, error) {
-	return RunAnalysisWithAll(baseDir, symbol, comp, quote, sentiment, policy, nil, nil, nil, nil)
+	return RunAnalysisWithAll(baseDir, symbol, comp, quote, sentiment, policy, nil, nil, nil, nil, nil)
 }
 
 // RunAnalysisWithAll 执行完整的财报透视分析，集成所有附加模块（可比公司、行情、舆情、政策、技术形态、交易活跃度、机器学习、RIM估值）
-func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, ml *MLPredictionData, rim *RIMData) (*AnalysisReport, error) {
+func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData, ml *MLPredictionData, rim *RIMData) (*AnalysisReport, error) {
 	data, err := LoadFinancialData(baseDir, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("load financial data: %w", err)
@@ -110,7 +110,7 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 		industry = CompareWithIndustry(policy.Industry, steps, data.Years[0])
 	}
 
-	md := GenerateMarkdown(symbol, data.Years, steps, scores, comp, industry, quote, sentiment, policy, technical, activity, ml, rim)
+	md := GenerateMarkdown(symbol, data.Years, steps, scores, comp, industry, quote, sentiment, policy, technical, activity, moneyflow, ml, rim)
 
 	hr := ExtractHighlightsAndRisks(steps, data.Years)
 

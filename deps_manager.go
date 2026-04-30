@@ -27,9 +27,9 @@ type PythonEnvResult struct {
 	PythonPath  string          `json:"pythonPath"`
 	Version     string          `json:"version"`
 	Packages    []PythonPackage `json:"packages"`
-	AllReady    bool            `json:"allReady"`    // 所有必需包都已安装
-	Ready       bool            `json:"ready"`       // 所有包（含可选）都已安装
-	Missing     []string        `json:"missing"`     // 缺失的包名列表
+	AllReady    bool            `json:"allReady"` // 所有必需包都已安装
+	Ready       bool            `json:"ready"`    // 所有包（含可选）都已安装
+	Missing     []string        `json:"missing"`  // 缺失的包名列表
 }
 
 // requiredPackages 定义需要检测的核心包列表
@@ -140,9 +140,9 @@ func getPythonVersion(python string) string {
 func checkPythonPackage(python, moduleName string) (bool, string) {
 	script := fmt.Sprintf(
 		"import sys, importlib; "+
-		"m = importlib.import_module('%s'); "+
-		"print(getattr(m, '__version__', getattr(m, 'VERSION', 'unknown'))); "+
-		"sys.exit(0)",
+			"m = importlib.import_module('%s'); "+
+			"print(getattr(m, '__version__', getattr(m, 'VERSION', 'unknown'))); "+
+			"sys.exit(0)",
 		moduleName,
 	)
 	out, err := exec.Command(python, "-c", script).Output()

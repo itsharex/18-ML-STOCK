@@ -234,14 +234,14 @@ func step8RiskAnalysis(data *FinancialData) StepResult {
 		}
 
 		result.YearlyData[curYear] = map[string]any{
-			"DSRI":     dsri,
-			"GMI":      gmi,
-			"AQI":      aqi,
-			"SGI":      sgi,
-			"DEPI":     depi,
-			"SGAI":     sgai,
-			"TATA":     tata,
-			"LVGI":     lvgi,
+			"DSRI":        dsri,
+			"GMI":         gmi,
+			"AQI":         aqi,
+			"SGI":         sgi,
+			"DEPI":        depi,
+			"SGAI":        sgai,
+			"TATA":        tata,
+			"LVGI":        lvgi,
 			"MScore":      mscore,
 			"ZScore":      zscore,
 			"MRisk":       mRisk,
@@ -251,7 +251,7 @@ func step8RiskAnalysis(data *FinancialData) StepResult {
 			"GMRisk":      gmRisk,
 			"CrawlerRisk": crawlerRisk,
 			"AScore":      ascore,
-			"fraudRisk": ascore >= 60, // 黄灯阈值
+			"fraudRisk":   ascore >= 60, // 黄灯阈值
 		}
 		result.Pass[curYear] = ascore < 60
 	}

@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-
 )
 
 // PolicyUpdateResult Python脚本返回的更新结果
@@ -46,10 +45,10 @@ func UpdatePolicyLibrary(dataDir string) (*PolicyUpdateResult, error) {
 	python := resolvePythonExecutable()
 	cmd := exec.Command(python, script, dataDir)
 	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
-	
+
 	// Windows: 隐藏 CMD 窗口
 	setHideWindow(cmd)
-	
+
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {

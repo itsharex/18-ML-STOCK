@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import './Settings.css'
+import { GetTushareConfig, SaveTushareConfig, VerifyTushareToken } from '../wailsjs/go/main/App'
+import type { main } from '../wailsjs/go/models'
 
 export interface AppSettings {
   theme: 'dark' | 'light' | 'system'
@@ -94,6 +96,54 @@ export function Settings({
   const [activeTab, setActiveTab] = useState<'appearance' | 'data' | 'about'>('appearance')
   const dropdownRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
+
+  // Tushare 配置状态
+  const [tushareCfg, setTushareCfg] = useState<main.TushareConfig | null>(null)
+  const [tushareLoading, setTushareLoading] = useState(false)
+  const [tushareVerifyStatus, setTushareVerifyStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
+  const [tushareSaving, setTushareSaving] = useState(false)
+
+  // 加载 Tushare 配置
+  useEffect(() => {
+    GetTushareConfig().then((cfg) => {
+      setTushareCfg(cfg)
+    }).catch(() => {
+      setTushareCfg({
+        enabled: false, token: '', verified: false, verified_at: '',
+        use_for_financial: true, use_for_kline: true, use_for_quote: true, use_for_moneyflow: true
+      } as main.TushareConfig)
+    })
+  }, [isOpen])
+
+  const handleVerifyTushare = useCallback(async () => {
+    if (!tushareCfg?.token) return
+    setTushareVerifyStatus({type: null, message: ''})
+    setTushareLoading(true)
+    try {
+      const result = await VerifyTushareToken(tushareCfg.token)
+      setTushareVerifyStatus({type: result.success ? 'success' : 'error', message: result.message || '验证失败'})
+      if (result.success) {
+        setTushareCfg(prev => prev ? {...prev, verified: true, verified_at: new Date().toISOString()} : prev)
+      }
+    } catch (err: any) {
+      setTushareVerifyStatus({type: 'error', message: err?.message || '验证失败'})
+    } finally {
+      setTushareLoading(false)
+    }
+  }, [tushareCfg?.token])
+
+  const handleSaveTushare = useCallback(async () => {
+    if (!tushareCfg) return
+    setTushareSaving(true)
+    try {
+      await SaveTushareConfig(tushareCfg)
+      setTushareVerifyStatus({type: 'success', message: '配置已保存'})
+    } catch (err: any) {
+      setTushareVerifyStatus({type: 'error', message: err?.message || '保存失败'})
+    } finally {
+      setTushareSaving(false)
+    }
+  }, [tushareCfg])
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -252,6 +302,89 @@ export function Settings({
                       <span className="status-error">{industryActionStatus.message.length > 40 ? industryActionStatus.message.slice(0, 40) + '...' : industryActionStatus.message}</span>
                     )}
                   </div>
+                )}
+              </div>
+
+              {/* Tushare Pro 数据源 */}
+              <div className="settings-data-section">
+                <div className="settings-data-title">📊 Tushare Pro 数据源</div>
+                <div className="settings-data-desc">
+                  启用 Tushare 作为主要数据源，提升数据稳定性（需 tushare.pro 账号）
+                </div>
+
+                {tushareCfg && (
+                  <>
+                    <div className="settings-item settings-item-inline" style={{ marginTop: 8 }}>
+                      <label>启用 Tushare</label>
+                      <div className="settings-toggle-switch">
+                        <label className="switch">
+                          <input
+                            type="checkbox"
+                            checked={tushareCfg.enabled}
+                            onChange={(e) => setTushareCfg({ ...tushareCfg, enabled: e.target.checked })}
+                          />
+                          <span className="slider"></span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {tushareCfg.enabled && (
+                      <>
+                        <div className="settings-item" style={{ marginTop: 8 }}>
+                          <label>Token</label>
+                          <input
+                            type="password"
+                            value={tushareCfg.token}
+                            onChange={(e) => setTushareCfg({ ...tushareCfg, token: e.target.value, verified: false })}
+                            placeholder="请输入 Tushare Pro Token"
+                            style={{ width: '100%', marginTop: 4 }}
+                          />
+                          {tushareCfg.verified && (
+                            <div style={{ fontSize: 11, color: '#22c55e', marginTop: 2 }}>
+                              ✅ 已验证{tushareCfg.verified_at ? ` · ${tushareCfg.verified_at.slice(0, 10)}` : ''}
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <button
+                            className="settings-data-btn"
+                            onClick={handleVerifyTushare}
+                            disabled={tushareLoading || !tushareCfg.token}
+                          >
+                            {tushareLoading ? '验证中...' : '🔍 验证连通性'}
+                          </button>
+                          <button
+                            className="settings-data-btn"
+                            onClick={handleSaveTushare}
+                            disabled={tushareSaving}
+                          >
+                            {tushareSaving ? '保存中...' : '💾 保存配置'}
+                          </button>
+                        </div>
+
+                        {tushareVerifyStatus.type && (
+                          <div className="settings-action-status">
+                            {tushareVerifyStatus.type === 'success' ? (
+                              <span className="status-success">{tushareVerifyStatus.message}</span>
+                            ) : (
+                              <span className="status-error">{tushareVerifyStatus.message}</span>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="settings-item" style={{ marginTop: 8, fontSize: 12 }}>
+                          <label style={{ marginBottom: 4 }}>启用范围</label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <label><input type="checkbox" checked={tushareCfg.use_for_financial} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_financial: e.target.checked })} /> 财报数据</label>
+                            <label><input type="checkbox" checked={tushareCfg.use_for_kline} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_kline: e.target.checked })} /> 历史K线</label>
+                            <label><input type="checkbox" checked={tushareCfg.use_for_quote} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_quote: e.target.checked })} /> 每日指标（PE/PB/市值）</label>
+                            <label><input type="checkbox" checked={tushareCfg.use_for_moneyflow} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_moneyflow: e.target.checked })} /> 个股资金流向</label>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
                 )}
               </div>
 

@@ -66,6 +66,18 @@ export function ExportReportPDF(arg1, arg2) {
   return window['go']['main']['App']['ExportReportPDF'](arg1, arg2);
 }
 
+export function FetchHotConceptConstituents(arg1) {
+  return window['go']['main']['App']['FetchHotConceptConstituents'](arg1);
+}
+
+export function FetchHotConceptHistory(arg1) {
+  return window['go']['main']['App']['FetchHotConceptHistory'](arg1);
+}
+
+export function FetchHotConcepts(arg1) {
+  return window['go']['main']['App']['FetchHotConcepts'](arg1);
+}
+
 export function FetchMissingActivity(arg1) {
   return window['go']['main']['App']['FetchMissingActivity'](arg1);
 }
@@ -122,12 +134,20 @@ export function GetStockKlines(arg1) {
   return window['go']['main']['App']['GetStockKlines'](arg1);
 }
 
+export function GetStockMoneyflow(arg1, arg2) {
+  return window['go']['main']['App']['GetStockMoneyflow'](arg1, arg2);
+}
+
 export function GetStockProfile(arg1) {
   return window['go']['main']['App']['GetStockProfile'](arg1);
 }
 
 export function GetStockQuote(arg1) {
   return window['go']['main']['App']['GetStockQuote'](arg1);
+}
+
+export function GetTushareConfig() {
+  return window['go']['main']['App']['GetTushareConfig']();
 }
 
 export function GetWatchlist() {
@@ -166,6 +186,10 @@ export function MarkPythonDepsChecked() {
   return window['go']['main']['App']['MarkPythonDepsChecked']();
 }
 
+export function QuickAnalyzeStock(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['QuickAnalyzeStock'](arg1, arg2, arg3, arg4);
+}
+
 export function RefreshIndustryBaselines() {
   return window['go']['main']['App']['RefreshIndustryBaselines']();
 }
@@ -198,6 +222,10 @@ export function SaveDefaultPolicyLibrary() {
   return window['go']['main']['App']['SaveDefaultPolicyLibrary']();
 }
 
+export function SaveTushareConfig(arg1) {
+  return window['go']['main']['App']['SaveTushareConfig'](arg1);
+}
+
 export function SearchStocks(arg1) {
   return window['go']['main']['App']['SearchStocks'](arg1);
 }
@@ -216,4 +244,8 @@ export function UpdateModule4Only(arg1) {
 
 export function UpdatePolicyLibrary() {
   return window['go']['main']['App']['UpdatePolicyLibrary']();
+}
+
+export function VerifyTushareToken(arg1) {
+  return window['go']['main']['App']['VerifyTushareToken'](arg1);
 }
