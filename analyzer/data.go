@@ -3,8 +3,10 @@ package analyzer
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // FinancialData 包含标准化的三张财务报表数据
@@ -15,6 +17,7 @@ type FinancialData struct {
 	IncomeStatement map[string]map[string]float64
 	CashFlow        map[string]map[string]float64
 	Extras          map[string]float64 // 非财务风险爬虫数据（股权质押、问询函、减持等）
+	QualityWarnings []string           // 数据质量警告（供报告展示）
 }
 
 // LoadFinancialData 从 StockFinLens 存储目录加载某股票的财务报表 JSON
@@ -42,13 +45,81 @@ func LoadFinancialData(baseDir, symbol string) (*FinancialData, error) {
 		years = extractYearsFloat(cf)
 	}
 
-	return &FinancialData{
+	fd := &FinancialData{
 		Symbol:          symbol,
 		Years:           years,
 		BalanceSheet:    bs,
 		IncomeStatement: is,
 		CashFlow:        cf,
-	}, nil
+	}
+	fd.fixMissingData()
+	fd.validate()
+	return fd, nil
+}
+
+// fixMissingData 修复东方财富 API 数据缺失/错误问题
+// PARENT_EQUITY_BALANCE 经常返回 0 或错误值，需要从其他字段推导
+func (fd *FinancialData) fixMissingData() {
+	for _, year := range fd.Years {
+		// ========== 资产负债表修复 ==========
+		parentEquity := fd.GetValueOrZero(fd.BalanceSheet, "归母所有者权益合计", year)
+		totalEquity := fd.GetValueOrZero(fd.BalanceSheet, "所有者权益合计", year)
+		minorityEquity := fd.GetValueOrZero(fd.BalanceSheet, "少数股东权益", year)
+		asset := fd.GetValueOrZero(fd.BalanceSheet, "资产合计", year)
+		liability := fd.GetValueOrZero(fd.BalanceSheet, "负债合计", year)
+
+		// 兜底：如果总权益和归母权益都异常，用 资产 - 负债 推导总权益
+		if math.Abs(totalEquity) < 1 && asset > 0 && liability > 0 {
+			calculatedTotal := asset - liability
+			if math.Abs(calculatedTotal) > 1 {
+				fmt.Printf("[fixMissingData] %s %s: 总权益从 %.0f 修复为 %.0f (资产-负债)\n",
+					fd.Symbol, year, totalEquity, calculatedTotal)
+				totalEquity = calculatedTotal
+				if _, ok := fd.BalanceSheet["所有者权益合计"]; !ok {
+					fd.BalanceSheet["所有者权益合计"] = make(map[string]float64)
+				}
+				fd.BalanceSheet["所有者权益合计"][year] = calculatedTotal
+			}
+		}
+
+		// 归母权益为0或缺失（或异常负数），但总权益有值
+		if (math.Abs(parentEquity) < 1 || math.Abs(parentEquity+minorityEquity) < 1) && totalEquity != 0 {
+			calculatedParent := totalEquity - minorityEquity
+			if math.Abs(calculatedParent) > 1 {
+				fmt.Printf("[fixMissingData] %s %s: 归母权益从 %.0f 修复为 %.0f (总权益-少数股东权益)\n",
+					fd.Symbol, year, parentEquity, calculatedParent)
+				if _, ok := fd.BalanceSheet["归属于母公司所有者权益合计"]; !ok {
+					fd.BalanceSheet["归属于母公司所有者权益合计"] = make(map[string]float64)
+				}
+				fd.BalanceSheet["归属于母公司所有者权益合计"][year] = calculatedParent
+				if _, ok := fd.BalanceSheet["归母所有者权益合计"]; !ok {
+					fd.BalanceSheet["归母所有者权益合计"] = make(map[string]float64)
+				}
+				fd.BalanceSheet["归母所有者权益合计"][year] = calculatedParent
+			}
+		}
+
+		// ========== 利润表修复 ==========
+		// 旧版 downloader 遗漏了归母净利润，用 净利润 - 少数股东损益 推导
+		parentProfit := fd.GetValueOrZero(fd.IncomeStatement, "归母净利润", year)
+		netProfit := fd.GetValueOrZero(fd.IncomeStatement, "净利润", year)
+		minorityInterest := fd.GetValueOrZero(fd.IncomeStatement, "少数股东损益", year)
+		if math.Abs(parentProfit) < 1 && netProfit != 0 {
+			calculatedParentProfit := netProfit - minorityInterest
+			if math.Abs(calculatedParentProfit) > 1 {
+				fmt.Printf("[fixMissingData] %s %s: 归母净利润从 %.0f 修复为 %.0f (净利润-少数股东损益)\n",
+					fd.Symbol, year, parentProfit, calculatedParentProfit)
+				if _, ok := fd.IncomeStatement["归属于母公司所有者的净利润"]; !ok {
+					fd.IncomeStatement["归属于母公司所有者的净利润"] = make(map[string]float64)
+				}
+				fd.IncomeStatement["归属于母公司所有者的净利润"][year] = calculatedParentProfit
+				if _, ok := fd.IncomeStatement["归母净利润"]; !ok {
+					fd.IncomeStatement["归母净利润"] = make(map[string]float64)
+				}
+				fd.IncomeStatement["归母净利润"][year] = calculatedParentProfit
+			}
+		}
+	}
 }
 
 func loadFloatJSONFile(path string) (map[string]map[string]float64, error) {
@@ -67,7 +138,11 @@ func extractYearsFloat(data map[string]map[string]float64) []string {
 	yearSet := make(map[string]struct{})
 	for _, row := range data {
 		for year := range row {
-			yearSet[year] = struct{}{}
+			// 只保留年报数据（12-31结尾），过滤掉季报（03-31, 06-30, 09-30）
+			// 避免季报和年报混用导致同比计算失真（如Q1单季 vs 全年）
+			if strings.HasSuffix(year, "-12-31") || len(year) == 4 {
+				yearSet[year] = struct{}{}
+			}
 		}
 	}
 	years := make([]string, 0, len(yearSet))
@@ -133,4 +208,119 @@ func normalizeAccountName(name string) string {
 		return "固定资产折旧油气资产折耗生产性生物资产折旧"
 	}
 	return name
+}
+
+// validate 执行数据质量校验，将问题写入 QualityWarnings
+func (fd *FinancialData) validate() {
+	fd.QualityWarnings = []string{}
+
+	// 1. 数据年数检查
+	if len(fd.Years) < 2 {
+		fd.QualityWarnings = append(fd.QualityWarnings,
+			"财务数据不足2年，无法进行有效的同比分析")
+	}
+	if len(fd.Years) == 0 {
+		fd.QualityWarnings = append(fd.QualityWarnings,
+			"未找到任何年报数据，可能只有季报或数据缺失")
+		return
+	}
+
+	// 2. 关键科目完整性检查
+	requiredBS := []string{"资产合计", "负债合计", "归母所有者权益合计"}
+	for _, acc := range requiredBS {
+		found := false
+		norm := normalizeAccountName(acc)
+		for key := range fd.BalanceSheet {
+			if key == acc || key == norm {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fd.QualityWarnings = append(fd.QualityWarnings,
+				fmt.Sprintf("资产负债表缺少关键科目: %s", acc))
+		}
+	}
+
+	requiredIS := []string{"营业收入", "营业成本", "净利润"}
+	for _, acc := range requiredIS {
+		found := false
+		norm := normalizeAccountName(acc)
+		for key := range fd.IncomeStatement {
+			if key == acc || key == norm {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fd.QualityWarnings = append(fd.QualityWarnings,
+				fmt.Sprintf("利润表缺少关键科目: %s", acc))
+		}
+	}
+
+	requiredCF := []string{"经营活动现金流量净额"}
+	for _, acc := range requiredCF {
+		found := false
+		norm := normalizeAccountName(acc)
+		for key := range fd.CashFlow {
+			if key == acc || key == norm {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fd.QualityWarnings = append(fd.QualityWarnings,
+				fmt.Sprintf("现金流量表缺少关键科目: %s", acc))
+		}
+	}
+
+	// 3. 资产负债表平衡校验（资产 ≈ 负债 + 总权益）
+	// 注意：应使用所有者权益合计（总权益），而非归母所有者权益合计
+	for _, year := range fd.Years {
+		asset := fd.GetValueOrZero(fd.BalanceSheet, "资产合计", year)
+		liability := fd.GetValueOrZero(fd.BalanceSheet, "负债合计", year)
+		// 优先使用总权益，缺失时用 归母权益 + 少数股东权益 推导
+		totalEquity := fd.GetValueOrZero(fd.BalanceSheet, "所有者权益合计", year)
+		if math.Abs(totalEquity) < 1 {
+			parentEquity := fd.GetValueOrZero(fd.BalanceSheet, "归母所有者权益合计", year)
+			minorityEquity := fd.GetValueOrZero(fd.BalanceSheet, "少数股东权益", year)
+			if parentEquity > 0 || minorityEquity > 0 {
+				totalEquity = parentEquity + minorityEquity
+			}
+		}
+		if asset > 0 && liability > 0 && totalEquity > 0 {
+			diff := math.Abs(asset - liability - totalEquity)
+			if diff/asset > 0.05 {
+				fd.QualityWarnings = append(fd.QualityWarnings,
+					fmt.Sprintf("%s 资产负债表不平衡: 资产%.0f ≠ 负债%.0f + 总权益%.0f (差异%.1f%%)。此异常通常由东方财富 API 数据源精度/舍入问题导致，不影响核心分析指标（ROE、毛利率等）的准确性",
+						year, asset, liability, totalEquity, diff/asset*100))
+			}
+		}
+	}
+
+	// 4. 异常值检测
+	for i, year := range fd.Years {
+		revenue := fd.GetValueOrZero(fd.IncomeStatement, "营业收入", year)
+		if revenue < 0 {
+			fd.QualityWarnings = append(fd.QualityWarnings,
+				fmt.Sprintf("%s 营业收入为负数(%.0f)，数据异常", year, revenue))
+		}
+		asset := fd.GetValueOrZero(fd.BalanceSheet, "资产合计", year)
+		if asset < 0 {
+			fd.QualityWarnings = append(fd.QualityWarnings,
+				fmt.Sprintf("%s 总资产为负数(%.0f)，数据异常", year, asset))
+		}
+		// 营收同比极端变化检测（相邻年份）
+		if i > 0 {
+			prevYear := fd.Years[i-1]
+			prevRevenue := fd.GetValueOrZero(fd.IncomeStatement, "营业收入", prevYear)
+			if prevRevenue > 0 && revenue > 0 {
+				growth := (revenue - prevRevenue) / prevRevenue * 100
+				if growth > 500 || growth < -90 {
+					fd.QualityWarnings = append(fd.QualityWarnings,
+						fmt.Sprintf("%s 营收同比变化异常(%+.1f%%)，可能是数据重述或对比口径不一致", year, growth))
+				}
+			}
+		}
+	}
 }

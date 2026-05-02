@@ -64,6 +64,8 @@ export function GetReportHistory(arg1:string):Promise<Array<string>>;
 
 export function GetRiskRadar(arg1:string,arg2:string):Promise<Array<analyzer.RiskRadarItem>>;
 
+export function GetRiskSensitivity():Promise<string>;
+
 export function GetStockConcepts(arg1:string):Promise<downloader.StockConcepts>;
 
 export function GetStockDataHistory(arg1:string):Promise<Array<main.HistoryMeta>>;
@@ -119,6 +121,8 @@ export function SaveTushareConfig(arg1:main.TushareConfig):Promise<void>;
 export function SearchStocks(arg1:string):Promise<Array<main.StockInfo>>;
 
 export function SendNotification(arg1:string,arg2:string):Promise<void>;
+
+export function SetRiskSensitivity(arg1:string):Promise<void>;
 
 export function UpdateIndustryDatabase():Promise<downloader.IndustryUpdateResult>;
 

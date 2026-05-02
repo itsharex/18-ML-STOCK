@@ -34,12 +34,12 @@ func NewDataRouter(token string, enabled, useFin, useKline, useQuote, useMF bool
 
 // FetchKlines 获取历史K线，按优先级路由
 func (r *DataRouter) FetchKlines(market, code string, limit int) ([]KlineData, error) {
-	// 1. Tushare（如果启用）
+	// 1. StockFinLens 数据源（如果启用）
 	if r.tushareEnabled && r.useForKline && r.tushareClient != nil {
 		end := time.Now().Format("20060102")
 		start := time.Now().AddDate(-2, 0, 0).Format("20060102")
 		if klines, err := r.tushareClient.FetchDaily(market, code, start, end); err == nil && len(klines) > 0 {
-			fmt.Printf("[DataRouter] Klines from Tushare: %d bars for %s.%s\n", len(klines), market, code)
+			fmt.Printf("[DataRouter] Klines from StockFinLens: %d bars for %s.%s\n", len(klines), market, code)
 			if len(klines) > limit {
 				return klines[len(klines)-limit:], nil
 			}
@@ -74,7 +74,7 @@ func (r *DataRouter) FetchKlines(market, code string, limit int) ([]KlineData, e
 
 // FetchQuote 获取实时行情，按优先级路由
 func (r *DataRouter) FetchQuote(market, code string) (*StockQuote, error) {
-	// 实时行情不走 Tushare（daily_basic 是盘后数据）
+	// 实时行情不走 StockFinLens（daily_basic 是盘后数据）
 	// 1. 腾讯财经（最稳定）
 	fmt.Printf("[DataRouter] Quote trying Tencent for %s.%s\n", market, code)
 	if quote, err := fetchQuoteFromTencent(market, code); err == nil && quote != nil && quote.CurrentPrice > 0 {
@@ -91,10 +91,10 @@ func (r *DataRouter) FetchQuote(market, code string) (*StockQuote, error) {
 
 // FetchDailyMetrics 获取每日指标（PE/PB/市值/换手率），按优先级路由
 func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQuote, error) {
-	// 1. Tushare daily_basic（如果启用）
+	// 1. StockFinLens daily_basic（如果启用）
 	if r.tushareEnabled && r.useForQuote && r.tushareClient != nil {
 		if quote, err := r.tushareClient.FetchDailyBasic(market, code, tradeDate); err == nil && quote != nil && quote.CurrentPrice > 0 {
-			fmt.Printf("[DataRouter] Metrics from Tushare for %s.%s\n", market, code)
+			fmt.Printf("[DataRouter] Metrics from StockFinLens for %s.%s\n", market, code)
 			return quote, nil
 		}
 	}
@@ -112,7 +112,7 @@ func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQu
 
 // ========== 财报数据路由 ==========
 
-// TushareFinancialData 封装 Tushare 财务数据
+// TushareFinancialData 封装数据源财务数据
 type TushareFinancialData struct {
 	Income       []TushareIncomeItem
 	BalanceSheet []TushareBalanceItem
@@ -122,9 +122,9 @@ type TushareFinancialData struct {
 
 // FetchFinancialData 获取财务数据，按优先级路由
 func (r *DataRouter) FetchFinancialData(market, code string) (*TushareFinancialData, error) {
-	// 1. Tushare（如果启用）
+	// 1. StockFinLens 数据源（如果启用）
 	if r.tushareEnabled && r.useForFinancial && r.tushareClient != nil {
-		fmt.Printf("[DataRouter] Financial from Tushare for %s.%s\n", market, code)
+		fmt.Printf("[DataRouter] Financial from StockFinLens for %s.%s\n", market, code)
 		start := time.Now().AddDate(-5, 0, 0).Format("20060102")
 		end := time.Now().Format("20060102")
 
@@ -155,7 +155,7 @@ func (r *DataRouter) FetchFinancialData(market, code string) (*TushareFinancialD
 
 	// 2. 东方财富
 	fmt.Printf("[DataRouter] Financial fallback to EastMoney for %s.%s\n", market, code)
-	return nil, fmt.Errorf("Tushare 未启用或未获取到数据，请使用 EastMoney 下载")
+	return nil, fmt.Errorf("数据源未启用或未获取到数据，请使用 EastMoney 下载")
 }
 
 // toYearKey 将 Tushare 日期格式 20241231 转换为 2024-12-31
@@ -288,10 +288,10 @@ func setVal(target map[string]map[string]float64, account, year string, val floa
 
 // FetchMoneyflow 获取个股资金流向，按优先级路由
 func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]TushareMoneyflowItem, error) {
-	// 1. Tushare（如果启用）
+	// 1. StockFinLens 数据源（如果启用）
 	if r.tushareEnabled && r.useForMoneyflow && r.tushareClient != nil {
 		if mf, err := r.tushareClient.FetchMoneyflow(market, code, startDate, endDate); err == nil && len(mf) > 0 {
-			fmt.Printf("[DataRouter] Moneyflow from Tushare: %d records for %s.%s\n", len(mf), market, code)
+			fmt.Printf("[DataRouter] Moneyflow from StockFinLens: %d records for %s.%s\n", len(mf), market, code)
 			return mf, nil
 		}
 	}
@@ -304,11 +304,11 @@ func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]
 
 // FetchStockBasic 获取股票基础信息
 func (r *DataRouter) FetchStockBasic(market, code string) (*TushareStockBasic, error) {
-	// 1. Tushare（如果启用）
+	// 1. StockFinLens 数据源（如果启用）
 	if r.tushareEnabled && r.tushareClient != nil {
 		tsCode := toTsCode(market, code)
 		if basic, err := r.tushareClient.FetchStockBasic(tsCode); err == nil && basic != nil {
-			fmt.Printf("[DataRouter] StockBasic from Tushare for %s.%s\n", market, code)
+			fmt.Printf("[DataRouter] StockBasic from StockFinLens for %s.%s\n", market, code)
 			return basic, nil
 		}
 	}
@@ -324,7 +324,7 @@ func (r *DataRouter) FetchConceptList() ([]TushareConcept, error) {
 	if r.tushareEnabled && r.tushareClient != nil {
 		return r.tushareClient.FetchConceptList()
 	}
-	return nil, fmt.Errorf("Tushare 未启用")
+	return nil, fmt.Errorf("数据源未启用")
 }
 
 // FetchConceptDetail 获取概念成分股
@@ -332,7 +332,7 @@ func (r *DataRouter) FetchConceptDetail(conceptID string) ([]TushareConceptStock
 	if r.tushareEnabled && r.tushareClient != nil {
 		return r.tushareClient.FetchConceptDetail(conceptID)
 	}
-	return nil, fmt.Errorf("Tushare 未启用")
+	return nil, fmt.Errorf("数据源未启用")
 }
 
 // FetchProfile 获取股票基本资料，按优先级路由
@@ -343,9 +343,9 @@ func (r *DataRouter) FetchProfile(market, code string) (*StockProfile, error) {
 		return profile, nil
 	}
 
-	// 2. Tushare stock_basic（补充基础信息）
+	// 2. StockFinLens stock_basic（补充基础信息）
 	if r.tushareEnabled && r.tushareClient != nil {
-		fmt.Printf("[DataRouter] Profile fallback to Tushare for %s.%s\n", market, code)
+		fmt.Printf("[DataRouter] Profile fallback to StockFinLens for %s.%s\n", market, code)
 		tsCode := toTsCode(market, code)
 		if basic, err := r.tushareClient.FetchStockBasic(tsCode); err == nil && basic != nil {
 			profile := &StockProfile{
@@ -367,30 +367,30 @@ func (r *DataRouter) FetchConcepts(market, code string, changePercent float64) (
 		return concepts, nil
 	}
 
-	// 2. Tushare concept_detail（补充基础概念列表）
+	// 2. StockFinLens concept_detail（补充基础概念列表）
 	if r.tushareEnabled && r.tushareClient != nil {
-		fmt.Printf("[DataRouter] Concepts fallback to Tushare for %s.%s\n", market, code)
-		// Tushare 概念数据需通过 concept 列表反向查找，暂不实现
+		fmt.Printf("[DataRouter] Concepts fallback to StockFinLens for %s.%s\n", market, code)
+		// 数据源概念数据需通过 concept 列表反向查找，暂不实现
 		// 东财失败后直接返回错误，由调用方处理
 	}
 
 	return nil, fmt.Errorf("无法获取概念数据")
 }
 
-// IsUseForQuote 返回是否启用 Tushare 每日指标
+// IsUseForQuote 返回是否启用数据源每日指标
 func (r *DataRouter) IsUseForQuote() bool {
 	return r.tushareEnabled && r.useForQuote && r.tushareClient != nil
 }
 
-// IsUseForMoneyflow 返回是否启用 Tushare 个股资金流向
+// IsUseForMoneyflow 返回是否启用数据源个股资金流向
 func (r *DataRouter) IsUseForMoneyflow() bool {
 	return r.tushareEnabled && r.useForMoneyflow && r.tushareClient != nil
 }
 
-// VerifyTushare 验证 Tushare Token
+// VerifyTushare 验证数据源授权码
 func (r *DataRouter) VerifyTushare() error {
 	if r.tushareClient == nil {
-		return fmt.Errorf("Tushare 客户端未初始化")
+		return fmt.Errorf("数据源客户端未初始化")
 	}
 	return r.tushareClient.VerifyToken()
 }

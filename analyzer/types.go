@@ -48,6 +48,8 @@ type AnalysisReport struct {
 	RIM             *RIMData              `json:"rim,omitempty"`
 	Highlights      []string              `json:"highlights"`
 	Risks           []string              `json:"risks"`
+	RiskAlert       *RiskAlertSummary     `json:"riskAlert,omitempty"`
+	QualityWarnings []string              `json:"qualityWarnings,omitempty"`
 }
 
 // PassItem 单一年度的达标项
@@ -141,3 +143,63 @@ type MoneyflowData struct {
 	Items   []MoneyflowItem `json:"items"`
 	Summary string          `json:"summary"` // 简要分析
 }
+
+// RiskAlertFlag 单条风险标记
+type RiskAlertFlag struct {
+	Code    string   `json:"code"`    // 指标编码，如 "ascore_high"
+	Name    string   `json:"name"`    // 人类可读名称，如 "A-Score 偏高"
+	Value   float64  `json:"value"`   // 具体数值
+	Format  string   `json:"format"`  // 格式化模板，如 "A-Score %.0f"
+	Level   string   `json:"level"`   // high / medium
+	Source  string   `json:"source"`  // 数据来源，如 "step8" / "crawler"
+	Details []string `json:"details"` // 原始详情列表（如公告标题）
+}
+
+// RiskAlertSummary 风险警示摘要
+type RiskAlertSummary struct {
+	Level      string          `json:"level"`      // high / medium / low
+	Score      float64         `json:"score"`      // A-Score 值
+	OneVeto    bool            `json:"oneVeto"`    // 是否一票否决
+	Flags      []RiskAlertFlag `json:"flags"`      // 触发的风险项
+	PrimaryMsg string          `json:"primaryMsg"` // 主提示文案
+}
+
+// AuditorChangeDetail 审计机构变更详情
+type AuditorChangeDetail struct {
+	Date                 string `json:"date"`
+	OldAuditor           string `json:"old_auditor"`
+	NewAuditor           string `json:"new_auditor"`
+	Reason               string `json:"reason"`
+	IsBeforeAnnualReport bool   `json:"is_before_annual_report"`
+	AnnualReportDeadline string `json:"annual_report_deadline"`
+	RawTitle             string `json:"raw_title"`
+}
+
+// ExternalRiskData 外部风险数据（审计机构、高管变动、诉讼等）
+type ExternalRiskData struct {
+	AuditorChanged      bool                  `json:"auditorChanged"`      // 近3年是否更换审计机构
+	AuditorName         string                `json:"auditorName"`         // 当前审计机构名称
+	AuditorChangeDetails []AuditorChangeDetail `json:"auditorChangeDetails"` // 审计机构变更详情
+	ExecChanged         bool     `json:"execChanged"`         // 近1年财务负责人是否频繁更换
+	ExecChangeCount     int      `json:"execChangeCount"`     // 高管变动次数
+	ExecHistory         []string `json:"execHistory"`         // 高管变动原始公告列表
+	HasLitigation         bool     `json:"hasLitigation"`         // 是否存在诉讼/违规担保
+	LitigationCount       int      `json:"litigationCount"`       // 高风险诉讼/担保公告数量
+	LitigationHistory     []string `json:"litigationHistory"`     // 诉讼/担保原始公告列表
+	HasHighRiskGuarantee  bool     `json:"hasHighRiskGuarantee"`  // 是否存在高风险担保（违规/逾期/代偿）
+	HasGuarantee          bool     `json:"hasGuarantee"`          // 是否存在普通对外担保
+	HasFundOccupation     bool     `json:"hasFundOccupation"`     // 是否存在资金占用
+	HasInternalBuy      bool     `json:"hasInternalBuy"`      // 近半年是否有内部人增持
+	HasInternalSell     bool     `json:"hasInternalSell"`     // 近半年是否有内部人大额减持
+	SealControlRumor    bool     `json:"sealControlRumor"`    // 是否存在印章失控传闻（舆情）
+	Error               string   `json:"error,omitempty"`     // 数据获取错误
+}
+
+// SensitivityLevel 风险警示敏感度
+type SensitivityLevel string
+
+const (
+	SensitivityStrict  SensitivityLevel = "strict"  // 严格
+	SensitivityStandard SensitivityLevel = "standard" // 标准
+	SensitivityLoose   SensitivityLevel = "loose"   // 宽松
+)

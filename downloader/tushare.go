@@ -71,7 +71,7 @@ func (c *TushareClient) query(apiName string, params map[string]interface{}, fie
 	}
 
 	if result.Code != 0 {
-		return nil, fmt.Errorf("Tushare API 错误: code=%d, msg=%s", result.Code, result.Msg)
+		return nil, fmt.Errorf("数据源 API 错误: code=%d, msg=%s", result.Code, result.Msg)
 	}
 
 	return &result, nil
@@ -226,7 +226,7 @@ func (c *TushareClient) FetchDaily(market, code, startDate, endDate string) ([]K
 		return nil, err
 	}
 	if len(resp.Data.Items) == 0 {
-		return nil, fmt.Errorf("Tushare daily 无数据: %s", tsCode)
+		return nil, fmt.Errorf("daily 无数据: %s", tsCode)
 	}
 
 	// 获取复权因子（用于前复权）
@@ -330,7 +330,7 @@ func (c *TushareClient) FetchDailyBasic(market, code, tradeDate string) (*StockQ
 		return nil, err
 	}
 	if len(resp.Data.Items) == 0 {
-		return nil, fmt.Errorf("Tushare daily_basic 无数据: %s", tsCode)
+		return nil, fmt.Errorf("daily_basic 无数据: %s", tsCode)
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)

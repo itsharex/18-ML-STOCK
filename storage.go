@@ -939,9 +939,9 @@ func (s *Storage) CleanOldHotConceptHistory(maxDays int) error {
 	return nil
 }
 
-// ========== Tushare 配置存储 ==========
+// ========== 数据源配置存储 ==========
 
-// TushareConfig Tushare 数据源配置
+// TushareConfig 数据源配置
 type TushareConfig struct {
 	Enabled        bool   `json:"enabled"`
 	Token          string `json:"token"`
@@ -953,12 +953,12 @@ type TushareConfig struct {
 	UseForMoneyflow bool  `json:"use_for_moneyflow"`
 }
 
-// TushareConfigPath 返回 Tushare 配置文件路径
+// TushareConfigPath 返回数据源配置文件路径
 func (s *Storage) TushareConfigPath() string {
 	return filepath.Join(s.dataDir, "tushare_config.json")
 }
 
-// LoadTushareConfig 加载 Tushare 配置
+// LoadTushareConfig 加载数据源配置
 func (s *Storage) LoadTushareConfig() (*TushareConfig, error) {
 	path := s.TushareConfigPath()
 	data, err := os.ReadFile(path)
@@ -976,17 +976,17 @@ func (s *Storage) LoadTushareConfig() (*TushareConfig, error) {
 	}
 	var cfg TushareConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析 Tushare 配置失败: %w", err)
+		return nil, fmt.Errorf("解析数据源配置失败: %w", err)
 	}
 	return &cfg, nil
 }
 
-// SaveTushareConfig 保存 Tushare 配置
+// SaveTushareConfig 保存数据源配置
 func (s *Storage) SaveTushareConfig(cfg *TushareConfig) error {
 	path := s.TushareConfigPath()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化 Tushare 配置失败: %w", err)
+		return fmt.Errorf("序列化数据源配置失败: %w", err)
 	}
 	return os.WriteFile(path, data, 0644)
 }

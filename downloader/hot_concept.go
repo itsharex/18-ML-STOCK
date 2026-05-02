@@ -63,10 +63,10 @@ const (
 	emFSIndustry       = "m:90+t:1" // 行业板块
 )
 
-// tushareHotConceptClient 用于热点概念降级的 Tushare 客户端（由 app.go 设置）
+// tushareHotConceptClient 用于热点概念降级的数据源客户端（由 app.go 设置）
 var tushareHotConceptClient *TushareClient
 
-// SetTushareHotConceptClient 设置 Tushare 客户端，供热点概念降级使用
+// SetTushareHotConceptClient 设置数据源客户端，供热点概念降级使用
 func SetTushareHotConceptClient(client *TushareClient) {
 	tushareHotConceptClient = client
 }
@@ -85,15 +85,15 @@ func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
 	concepts, err := fetchConceptBoardFromEastMoney()
 	dataSource := "eastmoney"
 
-	// 3. 东财失败，尝试 Tushare 同花顺热搜降级
+	// 3. 东财失败，尝试 StockFinLens 同花顺热搜降级
 	if err != nil && tushareHotConceptClient != nil {
-		fmt.Printf("[HotConcept] EastMoney failed (%v), trying Tushare ths_hot...\n", err)
+		fmt.Printf("[HotConcept] EastMoney failed (%v), trying StockFinLens ths_hot...\n", err)
 		if tushareConcepts, tErr := fetchHotConceptsFromTushare(tushareHotConceptClient); tErr == nil && len(tushareConcepts) > 0 {
 			concepts = tushareConcepts
-			dataSource = "tushare"
+			dataSource = "stockfinlens"
 			err = nil
 		} else {
-			fmt.Printf("[HotConcept] Tushare ths_hot failed: %v\n", tErr)
+			fmt.Printf("[HotConcept] StockFinLens ths_hot failed: %v\n", tErr)
 		}
 	}
 
@@ -128,7 +128,7 @@ func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
 	return board, nil
 }
 
-// fetchHotConceptsFromTushare 通过 Tushare 同花顺热搜获取热点概念
+// fetchHotConceptsFromTushare 通过数据源同花顺热搜获取热点概念
 func fetchHotConceptsFromTushare(client *TushareClient) ([]HotConcept, error) {
 	items, err := client.FetchThsHot("")
 	if err != nil {
@@ -176,7 +176,7 @@ func fetchHotConceptsFromTushare(client *TushareClient) ([]HotConcept, error) {
 		return result[i].MainInflow > result[j].MainInflow
 	})
 
-	fmt.Printf("[HotConcept] Tushare ths_hot fetched %d concepts\n", len(result))
+	fmt.Printf("[HotConcept] StockFinLens ths_hot fetched %d concepts\n", len(result))
 	return result, nil
 }
 
@@ -546,7 +546,7 @@ func loadHotConceptCache(dataDir string) (*HotConceptBoard, bool) {
 	if err := json.Unmarshal(data, &board); err != nil {
 		return nil, false
 	}
-	// 检查是否过期：4 小时（Tushare ths_hot 限 2 次/天，延长缓存减少 API 调用）
+	// 检查是否过期：4 小时（数据源 ths_hot 限 2 次/天，延长缓存减少 API 调用）
 	if t, err := time.ParseInLocation("2006-01-02 15:04:05", board.UpdatedAt, time.Local); err == nil {
 		if time.Since(t) < 4*time.Hour {
 			return &board, true

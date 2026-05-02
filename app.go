@@ -52,12 +52,13 @@ func debugLog(format string, v ...interface{}) {
 
 // App struct
 type App struct {
-	ctx           context.Context
-	storage       *Storage
-	stocks        []StockInfo // 内存中的股票代码库
-	analysisMu    sync.Mutex
-	analysisLocks map[string]*sync.Mutex
-	dataRouter    *downloader.DataRouter // 数据源路由
+	ctx              context.Context
+	storage          *Storage
+	stocks           []StockInfo // 内存中的股票代码库
+	analysisMu       sync.Mutex
+	analysisLocks    map[string]*sync.Mutex
+	dataRouter       *downloader.DataRouter // 数据源路由
+	riskSensitivity  string                   // 风险警示敏感度
 }
 
 // StockInfo 股票基础信息
@@ -89,7 +90,7 @@ type DownloadResult struct {
 	Message    string                        `json:"message"`
 	Years      []string                      `json:"years"`
 	Validation []downloader.ValidationResult `json:"validation"`
-	SourceName string                        `json:"sourceName"` // 数据来源（Tushare / 东方财富 / 腾讯财经）
+	SourceName string                        `json:"sourceName"` // 数据来源（StockFinLens / 东方财富 / 腾讯财经）
 }
 
 // NewApp creates a new App application struct
@@ -967,14 +968,14 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 	var err error
 	var sourceName string
 
-	// 1. 优先尝试 DataRouter（Tushare）
+	// 1. 优先尝试 DataRouter（StockFinLens 数据源）
 	if a.dataRouter != nil && market != "HK" {
 		tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
 		if tErr == nil && tfd != nil {
 			data = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
 			if data != nil && len(data.Years) > 0 {
-				fmt.Printf("[DownloadReports] %s financial data from Tushare, years=%d\n", symbol, len(data.Years))
-				sourceName = "Tushare"
+				fmt.Printf("[DownloadReports] %s financial data from StockFinLens, years=%d\n", symbol, len(data.Years))
+				sourceName = "StockFinLens"
 			} else {
 				data = nil
 			}
@@ -1168,17 +1169,28 @@ func (a *App) UpdateModule4Only(symbol string) (*analyzer.AnalysisReport, error)
 	_, _ = a.storage.SaveReport(symbol, updatedContent, true)
 
 	// 8.5 保存分析快照（用于前端亮点与风险恢复）
-	_ = a.storage.SaveSnapshot(symbol, &analyzer.AnalysisReport{
-		Symbol:          symbol,
-		MarkdownContent: updatedContent,
-		Years:           finData.Years,
-	})
+	// 先加载原有快照，保留 RiskAlert/StepResults 等字段，只更新 MarkdownContent
+	existingSnapshot, _ := a.storage.LoadSnapshot(symbol)
+	if existingSnapshot != nil {
+		existingSnapshot.MarkdownContent = updatedContent
+		_ = a.storage.SaveSnapshot(symbol, existingSnapshot)
+	} else {
+		_ = a.storage.SaveSnapshot(symbol, &analyzer.AnalysisReport{
+			Symbol:          symbol,
+			MarkdownContent: updatedContent,
+			Years:           finData.Years,
+		})
+	}
 
 	// 9. 更新缓存哈希
 	compHash, _ := a.storage.ComputeComparablesHash(symbol)
 	_ = a.storage.SaveAnalysisCache(symbol, "", compHash)
 
-	// 10. 返回简化报告对象
+	// 10. 返回完整报告对象（保留 RiskAlert 等字段供前端使用）
+	if existingSnapshot != nil {
+		existingSnapshot.MarkdownContent = updatedContent
+		return existingSnapshot, nil
+	}
 	return &analyzer.AnalysisReport{
 		Symbol:          symbol,
 		MarkdownContent: updatedContent,
@@ -1336,7 +1348,7 @@ func (a *App) GetStockQuote(symbol string) (*downloader.StockQuote, error) {
 		return nil, fmt.Errorf("获取行情失败: %w", err)
 	}
 
-	// 如果启用了 Tushare 每日指标，用高质量数据补充/覆盖 PE/PB/市值/换手率等
+	// 如果启用了数据源每日指标，用高质量数据补充/覆盖 PE/PB/市值/换手率等
 	if a.dataRouter != nil && a.dataRouter.IsUseForQuote() {
 		if metrics, mErr := a.dataRouter.FetchDailyMetrics(market, code, ""); mErr == nil && metrics != nil {
 			if metrics.PE > 0 {
@@ -1360,7 +1372,7 @@ func (a *App) GetStockQuote(symbol string) (*downloader.StockQuote, error) {
 			if metrics.DividendYield > 0 {
 				quote.DividendYield = metrics.DividendYield
 			}
-			debugLog("[GetStockQuote] %s merged Tushare daily metrics (PE=%.2f PB=%.2f)", symbol, quote.PE, quote.PB)
+			debugLog("[GetStockQuote] %s merged StockFinLens daily metrics (PE=%.2f PB=%.2f)", symbol, quote.PE, quote.PB)
 		}
 	}
 
@@ -1409,6 +1421,7 @@ type CacheStatus struct {
 	LastAnalysisAt     string `json:"lastAnalysisAt"`
 	DataChanged        bool   `json:"dataChanged"`
 	ComparablesChanged bool   `json:"comparablesChanged"`
+	DataMissing        bool   `json:"dataMissing"`
 }
 
 // CheckAnalysisCache 检查分析缓存状态
@@ -1418,6 +1431,18 @@ func (a *App) CheckAnalysisCache(symbol string) (*CacheStatus, error) {
 		debugLog("[CheckAnalysisCache] Error: storage not initialized")
 		return nil, fmt.Errorf("存储未初始化")
 	}
+
+	// 检查核心财报数据是否存在
+	stockDir := filepath.Join(a.storage.DataDir(), "data", symbol)
+	requiredFiles := []string{"balance_sheet.json", "income_statement.json", "cash_flow.json"}
+	dataMissing := false
+	for _, name := range requiredFiles {
+		if _, err := os.Stat(filepath.Join(stockDir, name)); os.IsNotExist(err) {
+			dataMissing = true
+			break
+		}
+	}
+
 	currentDataHash, err := a.storage.ComputeDataHash(symbol)
 	if err != nil {
 		return nil, err
@@ -1441,12 +1466,13 @@ func (a *App) CheckAnalysisCache(symbol string) (*CacheStatus, error) {
 	}
 
 	result := &CacheStatus{
-		Unchanged:          !dataChanged && !comparablesChanged,
+		Unchanged:          !dataChanged && !comparablesChanged && !dataMissing,
 		LastAnalysisAt:     lastAnalysisAt,
 		DataChanged:        dataChanged,
 		ComparablesChanged: comparablesChanged,
+		DataMissing:        dataMissing,
 	}
-	debugLog("[CheckAnalysisCache] Result for %s: unchanged=%v", symbol, result.Unchanged)
+	debugLog("[CheckAnalysisCache] Result for %s: unchanged=%v, dataMissing=%v", symbol, result.Unchanged, result.DataMissing)
 	return result, nil
 }
 
@@ -1860,6 +1886,96 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		}
 	}()
 
+	// 并发 4: 外部风险数据查询（审计机构、高管变动、诉讼）
+	externalRiskData := &analyzer.ExternalRiskData{}
+	wg.Add(1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				debugLog("[PANIC] external risk goroutine: %v", r)
+			}
+			wg.Done()
+		}()
+		// 审计机构变更
+		if ah, err := downloader.FetchAuditorHistory(symbol); err == nil && ah != nil {
+			externalRiskData.AuditorChanged = ah.AuditorChanged
+			externalRiskData.AuditorName = ah.AuditorName
+			externalRiskData.AuditorChangeDetails = make([]analyzer.AuditorChangeDetail, 0, len(ah.ChangeDetails))
+			for _, cd := range ah.ChangeDetails {
+				externalRiskData.AuditorChangeDetails = append(externalRiskData.AuditorChangeDetails, analyzer.AuditorChangeDetail{
+					Date:                 cd.Date,
+					OldAuditor:           cd.OldAuditor,
+					NewAuditor:           cd.NewAuditor,
+					Reason:               cd.Reason,
+					IsBeforeAnnualReport: cd.IsBeforeAnnualReport,
+					AnnualReportDeadline: cd.AnnualReportDeadline,
+					RawTitle:             cd.RawTitle,
+				})
+			}
+		}
+		// 高管变动
+		if ec, err := downloader.FetchExecChanges(symbol); err == nil && ec != nil {
+			// 二次过滤：只保留明确标记为 CFO/审计相关的条目（兼容旧版脚本）
+			filteredHistory := make([]string, 0, len(ec.History))
+			for _, h := range ec.History {
+				if strings.Contains(h, "[CFO]") || strings.Contains(h, "[审计]") {
+					filteredHistory = append(filteredHistory, h)
+				}
+			}
+			execCount := len(filteredHistory)
+			externalRiskData.ExecChangeCount = execCount
+			externalRiskData.ExecHistory = filteredHistory
+			externalRiskData.ExecChanged = execCount >= 3
+		}
+		// 诉讼/担保
+		if li, err := downloader.FetchLitigationInfo(symbol); err == nil && li != nil {
+			// 二次过滤：排除正常担保额度类公告（兼容旧版脚本）
+			filteredHistory := make([]string, 0, len(li.History))
+			for _, h := range li.History {
+				if strings.Contains(h, "担保额度") || strings.Contains(h, "预计担保") || strings.Contains(h, "为控股子公司提供担保") || strings.Contains(h, "为全资子公司提供担保") || strings.Contains(h, "为子公司提供担保") {
+					continue
+				}
+				filteredHistory = append(filteredHistory, h)
+			}
+			// 从过滤后的 history 重新判断风险等级
+			hasHighRisk := false
+			hasFundOccupation := false
+			highRiskCount := 0
+			hasNormalGuarantee := false
+			for _, h := range filteredHistory {
+				if strings.Contains(h, "[高风险担保]") || strings.Contains(h, "[诉讼仲裁]") || strings.Contains(h, "[违规处罚]") {
+					hasHighRisk = true
+					highRiskCount++
+				}
+				if strings.Contains(h, "资金占用") || strings.Contains(h, "占用资金") {
+					hasFundOccupation = true
+					highRiskCount++
+				}
+				if strings.Contains(h, "[担保]") && !strings.Contains(h, "[高风险担保]") {
+					hasNormalGuarantee = true
+				}
+			}
+			// 兼容旧版脚本：如果过滤后没有普通担保，但 li.HasGuarantee 为 true，
+			// 检查原始 history 中是否真的有非"担保额度"的普通担保
+			if !hasNormalGuarantee && li.HasGuarantee {
+				for _, h := range li.History {
+					if strings.Contains(h, "[担保]") && !strings.Contains(h, "[高风险担保]") &&
+						!strings.Contains(h, "担保额度") && !strings.Contains(h, "预计担保") &&
+						!strings.Contains(h, "为控股子公司提供担保") && !strings.Contains(h, "为全资子公司提供担保") {
+						hasNormalGuarantee = true
+						break
+					}
+				}
+			}
+			externalRiskData.LitigationCount = highRiskCount
+			externalRiskData.LitigationHistory = filteredHistory
+			externalRiskData.HasHighRiskGuarantee = hasHighRisk
+			externalRiskData.HasFundOccupation = hasFundOccupation
+			externalRiskData.HasLitigation = hasHighRisk || hasFundOccupation
+			externalRiskData.HasGuarantee = hasNormalGuarantee && !hasHighRisk && !hasFundOccupation
+		}
+	}()
+
 	wg.Wait()
 	debugLog("[AnalyzeStock] ML and RIM data fetching completed, mlData=%v, extRIM=%v", mlData != nil, extRIM != nil)
 
@@ -2025,7 +2141,13 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		}
 	}
 
-	report, err := analyzer.RunAnalysisWithAll(a.storage.DataDir(), symbol, compAnalysis, quoteData, sentimentData, policyData, technicalData, activityData, moneyflowData, mlData, rimData)
+	// 获取用户设置的风险敏感度
+	sensitivity := analyzer.SensitivityStandard
+	if s := a.getRiskSensitivity(); s != "" {
+		sensitivity = analyzer.SensitivityLevel(s)
+	}
+
+	report, err := analyzer.RunAnalysisWithAll(a.storage.DataDir(), symbol, compAnalysis, quoteData, sentimentData, policyData, technicalData, activityData, moneyflowData, mlData, rimData, finData.Extras, externalRiskData, sensitivity)
 	if err != nil {
 		return nil, err
 	}
@@ -2787,7 +2909,7 @@ type QuickAnalysis struct {
 	TurnoverRate  float64 `json:"turnover_rate"`
 	VolumeRatio   float64 `json:"volume_ratio"`
 
-	// 资金流向（优先 Tushare moneyflow，否则近似估算）
+	// 资金流向（优先 StockFinLens moneyflow，否则近似估算）
 	HasMoneyflowData bool    `json:"has_moneyflow_data"` // 是否有真实资金流向数据
 	MainInflow       float64 `json:"main_inflow"`        // 主力净流入（大单+特大单），元
 	SmNetAmount      float64 `json:"sm_net_amount"`      // 小单净流入，元
@@ -2811,6 +2933,9 @@ type QuickAnalysis struct {
 	// 风口关联（来自 Concepts）
 	Concepts     []string `json:"concepts"`
 	ConceptMatch []string `json:"concept_match"` // 与当前 Top 20 热点的交集
+
+	// 风险警示
+	RiskAlert *analyzer.RiskAlertSummary `json:"riskAlert,omitempty"`
 
 	// 错误信息
 	Errors []string `json:"errors"`
@@ -2950,7 +3075,7 @@ func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickA
 		mu.Unlock()
 	}()
 
-	// 5. 获取个股资金流向（优先 Tushare moneyflow，替换 Quote 中的近似值）
+	// 5. 获取个股资金流向（优先 StockFinLens moneyflow，替换 Quote 中的近似值）
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -2982,10 +3107,47 @@ func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickA
 				return
 			}
 		}
-		// 未启用 Tushare 或获取失败：保留 Quote goroutine 中的近似值
+		// 未启用 StockFinLens 或获取失败：保留 Quote goroutine 中的近似值
+	}()
+
+	// 6. 获取非财务风险数据（质押、问询、减持）
+	var quickExtras map[string]float64
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				mu.Lock()
+				result.Errors = append(result.Errors, fmt.Sprintf("RiskCrawler panic: %v", r))
+				mu.Unlock()
+			}
+		}()
+		if rc, err := downloader.FetchRiskCrawlerData(symbol); err == nil {
+			mu.Lock()
+			quickExtras = make(map[string]float64)
+			if rc.PledgeRatio != nil {
+				quickExtras["pledgeRatio"] = *rc.PledgeRatio
+			}
+			if rc.InquiryCount1Y != nil {
+				quickExtras["inquiryCount"] = float64(*rc.InquiryCount1Y)
+			}
+			if rc.ReductionCount1Y != nil {
+				quickExtras["reductionCount"] = float64(*rc.ReductionCount1Y)
+			}
+			mu.Unlock()
+		}
 	}()
 
 	wg.Wait()
+
+	// 构建快速分析风险摘要
+	// 优先使用本地缓存的历史分析 RiskAlert
+	if cached, err := a.storage.LoadSnapshot(symbol); err == nil && cached != nil && cached.RiskAlert != nil {
+		result.RiskAlert = cached.RiskAlert
+	} else {
+		// 无历史分析时，基于爬虫数据构建简化版风险摘要
+		result.RiskAlert = buildQuickRiskAlert(quickExtras)
+	}
 
 	// 计算 concept_match：当前股票概念与传入的热点概念名称的交集
 	if conceptCode != "" {
@@ -3009,6 +3171,71 @@ func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickA
 	}
 
 	return result, nil
+}
+
+// buildQuickRiskAlert 基于爬虫数据构建简化版风险摘要
+func buildQuickRiskAlert(extras map[string]float64) *analyzer.RiskAlertSummary {
+	if len(extras) == 0 {
+		return nil
+	}
+
+	flags := []analyzer.RiskAlertFlag{}
+	pledgeRatio := extras["pledgeRatio"]
+	inquiryCount := extras["inquiryCount"]
+	reductionCount := extras["reductionCount"]
+
+	if pledgeRatio > 70 {
+		flags = append(flags, analyzer.RiskAlertFlag{
+			Code: "pledge_extreme", Name: "大股东高比例质押", Value: pledgeRatio, Level: "high", Source: "crawler",
+			Format: fmt.Sprintf("股权质押 %.0f%%", pledgeRatio),
+		})
+	} else if pledgeRatio > 30 {
+		flags = append(flags, analyzer.RiskAlertFlag{
+			Code: "pledge_high", Name: "股权质押比例偏高", Value: pledgeRatio, Level: "medium", Source: "crawler",
+			Format: fmt.Sprintf("股权质押 %.0f%%", pledgeRatio),
+		})
+	}
+
+	if inquiryCount >= 3 {
+		flags = append(flags, analyzer.RiskAlertFlag{
+			Code: "inquiry_extreme", Name: "一年内多次监管问询", Value: inquiryCount, Level: "high", Source: "crawler",
+			Format: fmt.Sprintf("近1年被监管问询 %.0f 次", inquiryCount),
+		})
+	}
+
+	if reductionCount >= 1 {
+		flags = append(flags, analyzer.RiskAlertFlag{
+			Code: "reduction", Name: "大股东减持", Value: reductionCount, Level: "medium", Source: "crawler",
+			Format: fmt.Sprintf("近1年减持公告 %.0f 次", reductionCount),
+		})
+	}
+
+	if len(flags) == 0 {
+		return &analyzer.RiskAlertSummary{Level: "low", PrimaryMsg: "🟢 未发现重大风险信号"}
+	}
+
+	highCount := 0
+	mediumCount := 0
+	for _, f := range flags {
+		if f.Level == "high" {
+			highCount++
+		} else {
+			mediumCount++
+		}
+	}
+
+	level := "medium"
+	msg := fmt.Sprintf("🟡 该股票存在 %d 项中风险信号，需保持关注", mediumCount)
+	if highCount > 0 {
+		level = "high"
+		msg = fmt.Sprintf("🔴 该股票存在 %d 项高风险信号，建议审慎评估", highCount+mediumCount)
+	}
+
+	return &analyzer.RiskAlertSummary{
+		Level:      level,
+		Flags:      flags,
+		PrimaryMsg: msg,
+	}
 }
 
 // inferMarketFromCodeQuick 通过 A 股代码前缀快速推断市场
@@ -3048,9 +3275,41 @@ func (a *App) ConfirmDialog(title, message string) bool {
 	return selection == "确定" || selection == "Yes" || selection == "OK"
 }
 
-// ========== Tushare 配置 Wails 绑定 ==========
+// getRiskSensitivity 获取用户设置的风险警示敏感度
+func (a *App) getRiskSensitivity() string {
+	if a.riskSensitivity == "" {
+		return string(analyzer.SensitivityStandard)
+	}
+	return a.riskSensitivity
+}
 
-// GetTushareConfig 获取 Tushare 配置
+// GetRiskSensitivity 获取风险警示敏感度（Wails 绑定）
+func (a *App) GetRiskSensitivity() string {
+	return a.getRiskSensitivity()
+}
+
+// SetRiskSensitivity 设置风险警示敏感度（Wails 绑定）
+func (a *App) SetRiskSensitivity(sensitivity string) error {
+	a.riskSensitivity = sensitivity
+	debugLog("[Settings] risk sensitivity set to %s", sensitivity)
+	return nil
+}
+
+// decodeToken 对授权码进行 base64 解码（失败则返回原值，兼容老用户）
+func decodeToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	decoded, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return token
+	}
+	return string(decoded)
+}
+
+// ========== StockFinLens 数据源配置 Wails 绑定 ==========
+
+// GetTushareConfig 获取数据源配置
 func (a *App) GetTushareConfig() (*TushareConfig, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("存储未初始化")
@@ -3058,7 +3317,7 @@ func (a *App) GetTushareConfig() (*TushareConfig, error) {
 	return a.storage.LoadTushareConfig()
 }
 
-// SaveTushareConfig 保存 Tushare 配置
+// SaveTushareConfig 保存数据源配置
 func (a *App) SaveTushareConfig(cfg TushareConfig) error {
 	if a.storage == nil {
 		return fmt.Errorf("存储未初始化")
@@ -3078,39 +3337,41 @@ func (a *App) reloadDataRouter() {
 	}
 	cfg, err := a.storage.LoadTushareConfig()
 	if err != nil {
-		fmt.Printf("[DataRouter] 加载 Tushare 配置失败: %v\n", err)
+		fmt.Printf("[DataRouter] 加载数据源配置失败: %v\n", err)
 		a.dataRouter = downloader.NewDataRouter("", false, false, false, false, false)
 		return
 	}
-	fmt.Printf("[DataRouter] Tushare enabled=%v token=%v financial=%v kline=%v quote=%v moneyflow=%v\n",
-		cfg.Enabled, cfg.Token != "", cfg.UseForFinancial, cfg.UseForKline, cfg.UseForQuote, cfg.UseForMoneyflow)
-	a.dataRouter = downloader.NewDataRouter(cfg.Token, cfg.Enabled,
+	realToken := decodeToken(cfg.Token)
+	fmt.Printf("[DataRouter] StockFinLens enabled=%v token=%v financial=%v kline=%v quote=%v moneyflow=%v\n",
+		cfg.Enabled, realToken != "", cfg.UseForFinancial, cfg.UseForKline, cfg.UseForQuote, cfg.UseForMoneyflow)
+	a.dataRouter = downloader.NewDataRouter(realToken, cfg.Enabled,
 		cfg.UseForFinancial, cfg.UseForKline, cfg.UseForQuote, cfg.UseForMoneyflow)
 
-	// 设置热点概念降级用的 Tushare 客户端
-	if cfg.Enabled && cfg.Token != "" {
-		downloader.SetTushareHotConceptClient(downloader.NewTushareClient(cfg.Token))
+	// 设置热点概念降级用的数据源客户端
+	if cfg.Enabled && realToken != "" {
+		downloader.SetTushareHotConceptClient(downloader.NewTushareClient(realToken))
 	} else {
 		downloader.SetTushareHotConceptClient(nil)
 	}
 }
 
-// TushareVerifyResult Tushare Token 验证结果
+// TushareVerifyResult 授权码验证结果
 type TushareVerifyResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// VerifyTushareToken 验证 Tushare Token 是否有效
+// VerifyTushareToken 验证授权码是否有效
 func (a *App) VerifyTushareToken(token string) (*TushareVerifyResult, error) {
 	if token == "" {
-		return &TushareVerifyResult{Success: false, Message: "Token 不能为空"}, nil
+		return &TushareVerifyResult{Success: false, Message: "授权码不能为空"}, nil
 	}
-	client := downloader.NewTushareClient(token)
+	realToken := decodeToken(token)
+	client := downloader.NewTushareClient(realToken)
 	if err := client.VerifyToken(); err != nil {
 		return &TushareVerifyResult{Success: false, Message: fmt.Sprintf("验证失败: %v", err)}, nil
 	}
-	return &TushareVerifyResult{Success: true, Message: "验证通过，Token 有效"}, nil
+	return &TushareVerifyResult{Success: true, Message: "验证通过，授权码有效"}, nil
 }
 
 // ========== 个股资金流向 ==========
@@ -3133,10 +3394,10 @@ type StockMoneyflowResult struct {
 	Summary string               `json:"summary"` // 简要分析
 }
 
-// GetStockMoneyflow 获取个股近 N 日资金流向（优先 Tushare）
+// GetStockMoneyflow 获取个股近 N 日资金流向（优先数据源）
 func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult, error) {
 	if a.dataRouter == nil || !a.dataRouter.IsUseForMoneyflow() {
-		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "Tushare 资金流向未启用"}, nil
+		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "StockFinLens 资金流向未启用"}, nil
 	}
 
 	parts := strings.Split(symbol, ".")

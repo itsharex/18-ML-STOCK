@@ -60,8 +60,13 @@ def get_model_d():
     if _model_d is None and ENGINE_D_AVAILABLE:
         model_path = os.path.join(SCRIPT_DIR, "engine_d_risk", "model", "engine_d_model.pkl")
         if os.path.exists(model_path):
-            with open(model_path, "rb") as f:
-                _model_d = pickle.load(f)
+            try:
+                with open(model_path, "rb") as f:
+                    _model_d = pickle.load(f)
+            except Exception as e:
+                # pickle 加载失败（版本不兼容或文件损坏）时优雅降级
+                print(json.dumps({"warning": f"Engine-D 模型加载失败，将使用规则评估: {e}"}), file=sys.stderr)
+                _model_d = None
     return _model_d
 
 
@@ -253,7 +258,7 @@ def infer_engine_d(payload):
         'goodwill_to_equity', 'inventory_turnover', 'receivable_turnover',
         'pe_ttm', 'pb', 'market_cap', 'turnover_20d', 'volatility_60d', 'max_drawdown_1y',
         'pledge_ratio', 'regulatory_inquiry_count_1y', 'major_shareholder_reduction_1y',
-        'auditor_switch_count_2y'
+        'auditor_switch_count_2y', 'cfo_change'
     ]
     
     # 找出最重要的3个特征

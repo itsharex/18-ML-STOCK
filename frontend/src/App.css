@@ -717,6 +717,12 @@ body.light .collapsible-title {
 .collapsible-toggle {
   font-size: 12px;
   color: #64748b;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.collapsible-toggle.expanded {
+  transform: rotate(90deg);
 }
 
 body.light .collapsible-toggle {
@@ -1337,22 +1343,6 @@ body.light .trace-trigger-btn:hover {
   vertical-align: middle;
 }
 
-/* 隐藏 <details> summary 的默认三角形标记 */
-.inline-tooltip summary {
-  list-style: none;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-}
-
-.inline-tooltip summary::-webkit-details-marker {
-  display: none;
-}
-
-.inline-tooltip summary::marker {
-  display: none;
-}
-
 .inline-tooltip-trigger {
   cursor: pointer;
   color: #3b82f6;
@@ -1369,19 +1359,27 @@ body.light .trace-trigger-btn:hover {
 }
 
 .inline-tooltip .inline-tooltip-body {
-  position: absolute;
-  left: 28px;
-  top: -8px;
+  position: fixed;
+  left: var(--tt-left, 0);
+  top: var(--tt-top, 0);
   width: 360px;
   background: #1e293b;
   border: 1px solid #334155;
   border-radius: 8px;
   padding: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-  z-index: 100;
+  z-index: 9999;
   font-size: 13px;
   line-height: 1.6;
   color: #e2e8f0;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s, visibility 0.15s;
+}
+
+.inline-tooltip:hover .inline-tooltip-body {
+  visibility: visible;
+  opacity: 1;
 }
 
 .inline-tooltip .inline-tooltip-body strong {
@@ -2717,4 +2715,206 @@ body.light .python-deps-logs {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   color: #475569;
+}
+
+/* ========== 风险警示横幅 ========== */
+
+.risk-alert-banner {
+  padding: 12px 14px;
+  margin: 10px 0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.risk-alert-high {
+  border-left: 4px solid #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.risk-alert-medium {
+  border-left: 4px solid #ea580c;
+  background: rgba(234, 88, 12, 0.12);
+}
+
+.risk-alert-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.risk-alert-high .risk-alert-title {
+  color: #fca5a5;
+}
+
+.risk-alert-medium .risk-alert-title {
+  color: #fdba74;
+}
+
+.risk-alert-msg {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.risk-alert-high .risk-alert-msg {
+  color: #fecaca;
+}
+
+.risk-alert-medium .risk-alert-msg {
+  color: #fed7aa;
+}
+
+.risk-alert-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.risk-alert-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tag-high {
+  background: rgba(220, 38, 38, 0.25);
+  color: #fecaca;
+}
+
+.tag-medium {
+  background: rgba(234, 88, 12, 0.25);
+  color: #fed7aa;
+}
+
+.risk-alert-more {
+  color: #94a3b8;
+  font-size: 11px;
+  align-self: center;
+}
+
+.risk-alert-veto {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fca5a5;
+}
+
+/* 浅色主题适配 */
+body.light .risk-alert-high {
+  border-left: 4px solid #b91c1c;
+  background: #fef2f2;
+}
+
+body.light .risk-alert-medium {
+  border-left: 4px solid #c2410c;
+  background: #fff7ed;
+}
+
+body.light .risk-alert-high .risk-alert-title {
+  color: #991b1b;
+}
+
+body.light .risk-alert-medium .risk-alert-title {
+  color: #9a3412;
+}
+
+body.light .risk-alert-high .risk-alert-msg {
+  color: #7f1d1d;
+}
+
+body.light .risk-alert-medium .risk-alert-msg {
+  color: #7c2d12;
+}
+
+body.light .tag-high {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+body.light .tag-medium {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+body.light .risk-alert-more {
+  color: #64748b;
+}
+
+body.light .risk-alert-veto {
+  color: #991b1b;
+}
+
+/* === 简化版风险警示横幅样式 === */
+.risk-alert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.risk-alert-high .risk-alert-header {
+  color: #fecaca;
+}
+
+.risk-alert-medium .risk-alert-header {
+  color: #fed7aa;
+}
+
+.risk-alert-toggle {
+  font-size: 16px;
+  margin-left: 8px;
+  opacity: 0.7;
+  display: inline-block;
+  transition: transform 0.2s ease;
+  line-height: 1;
+}
+
+.risk-alert-toggle.expanded {
+  transform: rotate(90deg);
+}
+
+.risk-alert-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.risk-alert-flag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.risk-alert-flag-high {
+  color: #fca5a5;
+}
+
+.risk-alert-flag-medium {
+  color: #fdba74;
+}
+
+/* 浅色主题 */
+body.light .risk-alert-high .risk-alert-header {
+  color: #991b1b;
+}
+
+body.light .risk-alert-medium .risk-alert-header {
+  color: #9a3412;
+}
+
+body.light .risk-alert-flag-high {
+  color: #b91c1c;
+}
+
+body.light .risk-alert-flag-medium {
+  color: #c2410c;
+}
+
+body.light .risk-alert-body {
+  border-top-color: rgba(0, 0, 0, 0.08);
 }

@@ -1,5 +1,61 @@
 # Changelog
 
+## [v1.3.28] - 2026-04-29
+
+### 新增 (Features)
+- **外部风险数据三爬虫**
+  - 审计机构变更（`downloader/auditor.go` + `scripts/fetch_auditor_history.py`）
+    - 巨潮资讯网公告查询，结构化提取变更日期、更换前后事务所、对应年报截止日、变更原因
+    - 近3年变更检测，年报披露期内（1-4月）变更一票否决
+  - 高管变动（`downloader/exec_changes.go` + `scripts/fetch_exec_changes.py`）
+    - 聚焦财务负责人（CFO/审计部），近1年>=3次触发高风险
+  - 诉讼/担保/资金占用（`downloader/litigation.go` + `scripts/fetch_litigation.py`）
+    - 担保分级：违规担保/资金占用一票否决，普通对外担保降级为累积项
+  - 巨潮资讯网公告查询公共工具（`scripts/cninfo_utils.py`）
+  - 分析时并发获取外部风险数据，融入风险警示与 A-Score 评分
+- **A-Score 风险评分增强**
+  - 非财务信号融入：股权质押、监管问询、大股东减持、审计机构变更、CFO变动
+  - Z-Score 从一票否决降级为参考信息
+  - 排雷阈值放宽：ROE低 10%→5%、毛利率下降 5→10 百分点等
+  - 累积触发阈值 2→3 条
+  - 新增 `analyzer/risk_alert.go`：12 项一票否决 + 二级指标累积逻辑
+- **数据质量自动修复与提示**
+  - 东方财富 API `PARENT_EQUITY_BALANCE` 返回 0 时自动修复
+    - 总权益 = 资产 - 负债
+    - 归母权益 = 总权益 - 少数股东权益
+    - 归母净利润 = 净利润 - 少数股东损益
+  - `analyzer/data.go` 新增 `fixMissingData()` 运行时兜底修复 + `data_test.go` 验证
+  - 资产负债表平衡校验修复：使用总权益（所有者权益合计）替代归母权益
+  - 数据质量提示区分严重问题与数据源精度问题，文案更友好
+- **财报缺失状态检测**
+  - `CheckAnalysisCache` 新增 `DataMissing` 字段
+  - 无财报时"财报分析"按钮 disabled + tooltip 提示
+  - 下载/导入成功后自动刷新缺失状态
+
+### 修复 (Fixes)
+- **ROE 0.00% 异常**
+  - 东方财富 API 归母权益字段经常返回 0，导致 ROE 计算为 0
+  - `downloader/mapping.go` 字段修正 + `analyzer/data.go` 运行时兜底
+- **下载后分析按钮不刷新**
+  - `handleDownload`/`handleImport` 成功后调用 `CheckAnalysisCache` 刷新 `dataMissing` 状态
+- **高风险项详情补齐**
+  - 全部 12 个一票否决项添加 `Details` 数据，数值说明格显示 ℹ️ 图标
+
+### UI/UX 优化
+- **风险警示面板重构**
+  - 中栏/右栏简化：只显示一行 `3项中高风险 ›`，点击展开
+  - 风险警示横幅新增表格展示（警示/风险指标/数值说明/等级）
+- **Tooltip 统一**
+  - 全部 ℹ️ 图标统一为 mouse hover 悬停弹出
+  - tooltip body 改为 `position: fixed` + `z-index: 9999`，脱离容器限制无遮挡
+  - 固定弹出方向（右下为主，右边界不足则左下），不再动态切换四向
+- **导入/导出按钮**
+  - 文案"导入本地csv/excel财报"→"导入csv/excel财报"
+  - 位置与下方"下载财报"/"财报分析"按钮对齐，单行显示
+- **Tushare 品牌隐藏**
+  - 全项目替换为"StockFinLens 数据源"/"授权码"
+  - `app.go` 新增 `decodeToken()` base64 解码
+
 ## [v1.3.27] - 2026-04-30
 
 ### 新增 (Features)

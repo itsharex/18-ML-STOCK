@@ -122,6 +122,10 @@ export function GetRiskRadar(arg1, arg2) {
   return window['go']['main']['App']['GetRiskRadar'](arg1, arg2);
 }
 
+export function GetRiskSensitivity() {
+  return window['go']['main']['App']['GetRiskSensitivity']();
+}
+
 export function GetStockConcepts(arg1) {
   return window['go']['main']['App']['GetStockConcepts'](arg1);
 }
@@ -232,6 +236,10 @@ export function SearchStocks(arg1) {
 
 export function SendNotification(arg1, arg2) {
   return window['go']['main']['App']['SendNotification'](arg1, arg2);
+}
+
+export function SetRiskSensitivity(arg1) {
+  return window['go']['main']['App']['SetRiskSensitivity'](arg1);
 }
 
 export function UpdateIndustryDatabase() {

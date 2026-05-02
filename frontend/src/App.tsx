@@ -6,6 +6,8 @@ import { FinancialTrendDrawer } from './FinancialTrendDrawer'
 import { Settings, loadSettings, AppSettings } from './Settings'
 import { ModuleCopyButton, setGlobalMarkdownContent } from './ModuleCopyButton'
 import { PythonDepsModal } from './PythonDepsModal'
+import { RiskBadge } from './components/RiskBadge'
+import { RiskAlertBanner } from './components/RiskAlertBanner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
@@ -25,14 +27,49 @@ function DetailsComponent({ children, ...props }: any) {
   const ref = useRef<HTMLDetailsElement>(null)
 
   useEffect(() => {
-    if (!open) return
+    const details = ref.current
+    if (!details) return
+    if (!open) {
+      details.classList.remove('tooltip-left', 'tooltip-top', 'tooltip-center')
+      return
+    }
     const handleClickOutside = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+
+    // 智能定位：检测 inline-tooltip body 是否超出视口
+    const rafId = requestAnimationFrame(() => {
+      if (!details.classList.contains('inline-tooltip')) return
+      const body = details.querySelector('.inline-tooltip-body') as HTMLElement | null
+      if (!body) return
+      const rect = body.getBoundingClientRect()
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      details.classList.remove('tooltip-left', 'tooltip-top', 'tooltip-center')
+      const fitsRight = rect.right <= vw - 8
+      const fitsBottom = rect.bottom <= vh - 8
+      const fitsLeft = rect.left >= 8
+      const fitsTop = rect.top >= 8
+      if (fitsRight && fitsBottom) {
+        // 默认右下，无需调整
+      } else if (fitsLeft && fitsBottom) {
+        details.classList.add('tooltip-left')
+      } else if (fitsRight && fitsTop) {
+        details.classList.add('tooltip-top')
+      } else if (fitsLeft && fitsTop) {
+        details.classList.add('tooltip-left', 'tooltip-top')
+      } else {
+        details.classList.add('tooltip-center')
+      }
+    })
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      cancelAnimationFrame(rafId)
+    }
   }, [open])
 
   const wrappedChildren = Children.map(children, (child: any) => {
@@ -56,30 +93,14 @@ function DetailsComponent({ children, ...props }: any) {
 }
 
 function InlineTooltip({ title, body }: { title: string; body: string }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [open])
-
   return (
-    <div ref={ref} className="inline-tooltip">
-      <span className="inline-tooltip-trigger" onClick={() => setOpen((prev) => !prev)}>ℹ️</span>
-      {open && (
-        <div className="inline-tooltip-body">
-          <strong>{title}</strong><br/>
-          {body}
-        </div>
-      )}
-    </div>
+    <span className="inline-tooltip">
+      <span className="inline-tooltip-trigger">ℹ️</span>
+      <span className="inline-tooltip-body">
+        <strong>{title}</strong><br/>
+        {body}
+      </span>
+    </span>
   )
 }
 
@@ -89,7 +110,7 @@ function Collapsible({ title, children, defaultExpanded = false }: { title: Reac
     <div className="collapsible-section">
       <div className="collapsible-header" onClick={() => setExpanded(!expanded)}>
         <span className="collapsible-title">{title}</span>
-        <span className="collapsible-toggle">{expanded ? '收起' : '展开'}</span>
+        <span className={`collapsible-toggle ${expanded ? 'expanded' : ''}`}>›</span>
       </div>
       {expanded && <div className="collapsible-body">{children}</div>}
     </div>
@@ -226,6 +247,7 @@ function App() {
   const [viewingHistory, setViewingHistory] = useState<string | null>(null)
   const [historyContent, setHistoryContent] = useState<string>('')
   const [dataHistory, setDataHistory] = useState<HistoryMeta[]>([])
+  const [dataMissing, setDataMissing] = useState(false)
   const [profile, setProfile] = useState<StockProfile | null>(null)
   const [comparables, setComparables] = useState<string[]>([])
   const [appliedComparables, setAppliedComparables] = useState<string[]>([])
@@ -271,6 +293,7 @@ function App() {
   const [activitySort, setActivitySort] = useState<'none' | 'desc' | 'asc'>('none')
   const [flashCode, setFlashCode] = useState<string | null>(null)
   const [filterData, setFilterData] = useState<Record<string, WatchlistFilterItem>>({})
+
   const [watchlistFilter, setWatchlistFilter] = useState<
     'none' | 'highReturn' | 'lowRisk' | 'hasData' | 'noData' | 'analyzed' | 'unanalyzed'
   >('none')
@@ -675,6 +698,24 @@ function App() {
       })
   }, [selectedStock, snapshots])
 
+  // 自选股列表加载完成后，批量加载所有股票的快照（用于左栏警示灯持久显示）
+  useEffect(() => {
+    if (watchlist.length === 0) return
+    watchlist.forEach((s) => {
+      if (snapshots[s.code]) return
+      LoadAnalysisSnapshot(s.code)
+        .then((snapshot) => {
+          if (snapshot) {
+            setSnapshots((prev) => ({ ...prev, [s.code]: snapshot }))
+          }
+        })
+        .catch(() => {
+          // 静默忽略，该股票可能从未分析过
+        })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist])
+
   const currentSnapshot = selectedStock ? snapshots[selectedStock.code] : null
   const { highlights, risks } = useMemo(() => {
     if (!currentSnapshot) return { highlights: [], risks: [] }
@@ -690,6 +731,7 @@ function App() {
       // 获取分析缓存时间
       const cache = await CheckAnalysisCache(code)
       setLastAnalysisAt(cache?.lastAnalysisAt || '')
+      setDataMissing(!!cache?.dataMissing)
       if (autoLoadLatest) {
         const content = await GetReport(code, 'latest.md')
         if (content) {
@@ -1042,6 +1084,8 @@ function App() {
       if (result && result.success) {
         alert(`导入成功！\n${result.message}\n资产负债表年份: ${result.balanceSheet?.join(', ') || '无'}\n利润表年份: ${result.income?.join(', ') || '无'}\n现金流量表年份: ${result.cashFlow?.join(', ') || '无'}`)
         await loadDataHistory(selectedStock.code)
+        const cache = await CheckAnalysisCache(selectedStock.code)
+        setDataMissing(!!cache?.dataMissing)
       } else {
         alert('导入失败')
       }
@@ -1083,6 +1127,8 @@ function App() {
         setDownloadStatus({type: 'success', message: msg})
         console.log('[handleDownload] Reloading data history for:', selectedStock.code)
         await loadDataHistory(selectedStock.code)
+        const cache = await CheckAnalysisCache(selectedStock.code)
+        setDataMissing(!!cache?.dataMissing)
         console.log('[handleDownload] Data history reloaded, count:', dataHistory.length)
         // 刷新筛选数据
         GetWatchlistFilterData().then((fd) => {
@@ -1183,6 +1229,12 @@ function App() {
     
     try {
       const cache = await CheckAnalysisCache(selectedStock.code)
+      setDataMissing(!!cache?.dataMissing)
+
+      if (cache?.dataMissing) {
+        alert('请先下载或导入财报数据')
+        return
+      }
       
       if (cache?.unchanged) {
         setLastAnalysisAt(cache.lastAnalysisAt || '')
@@ -1568,6 +1620,38 @@ function App() {
     setTraceList([])
     // 设置全局 Markdown 内容供模块复制功能使用
     setGlobalMarkdownContent(displayContent || '')
+  }, [displayContent])
+
+  // Tooltip 统一 hover 定位：报告渲染后为所有 inline-tooltip 绑定 mouseenter，
+  // 计算 trigger 的 viewport 位置并通过 CSS 变量设置 fixed 定位（固定右下，右边界不足则左下）
+  useEffect(() => {
+    if (!displayContent) return
+    const timer = setTimeout(() => {
+      document.querySelectorAll('.inline-tooltip').forEach((el) => {
+        const tooltip = el as HTMLElement
+        const body = tooltip.querySelector('.inline-tooltip-body') as HTMLElement | null
+        if (!body) return
+        const trigger = tooltip.querySelector('.inline-tooltip-trigger') as HTMLElement | null
+        if (!trigger) return
+        // 鼠标进入时计算一次位置（同一个 trigger 位置不变时结果始终一致）
+        const handleEnter = () => {
+          const rect = trigger.getBoundingClientRect()
+          const vw = window.innerWidth
+          const bodyWidth = 360
+          const offsetX = 28
+          const offsetY = -8
+          let left = rect.left + offsetX
+          // 右边界不足时改为左侧弹出
+          if (left + bodyWidth > vw - 8) {
+            left = rect.right - bodyWidth - offsetX
+          }
+          tooltip.style.setProperty('--tt-left', `${left}px`)
+          tooltip.style.setProperty('--tt-top', `${rect.top + offsetY}px`)
+        }
+        trigger.addEventListener('mouseenter', handleEnter)
+      })
+    }, 300)
+    return () => clearTimeout(timer)
   }, [displayContent])
 
   // 报告内容滚动时联动更新"跳转章节"下拉框显示
@@ -1964,6 +2048,9 @@ function App() {
                 <div className="watch-info" title={`${s.name}(${s.code})`}>
                   {s.name}<span className="code-part">({s.code})</span>
                 </div>
+                {snapshots[s.code]?.riskAlert && snapshots[s.code].riskAlert!.level !== 'low' && (
+                  <RiskBadge level={snapshots[s.code].riskAlert!.level} size="small" />
+                )}
                 <div className="watch-activity" title={act ? `${act.grade} · ${Math.round(act.score)}分` : ''}>
                   {scoreText}
                 </div>
@@ -2346,11 +2433,11 @@ function App() {
             </div>
 
             {/* 导入/导出操作区 */}
-            <div className="actions-sub" style={{ marginBottom: 10, justifyContent: 'center', gap: 12 }}>
-              <button className="btn-text" onClick={handleImport} disabled={loading}>
-                {loading ? '处理中...' : '导入本地csv/excel财报'}
+            <div className="actions-sub" style={{ display: 'flex', marginBottom: 10, padding: '0 16px', gap: 16, justifyContent: 'center' }}>
+              <button className="btn-text" style={{ flex: '1 1 0', textAlign: 'center', whiteSpace: 'nowrap', fontSize: 11 }} onClick={handleImport} disabled={loading}>
+                {loading ? '处理中...' : '导入csv/excel财报'}
               </button>
-              <button className="btn-text" onClick={handleExportCurrentData} disabled={!selectedStock || dataHistory.length === 0} title={dataHistory.length === 0 ? '请先下载或导入财报数据' : '导出当前财务数据到本地'}>
+              <button className="btn-text" style={{ flex: '1 1 0', textAlign: 'center', whiteSpace: 'nowrap', fontSize: 11 }} onClick={handleExportCurrentData} disabled={!selectedStock || dataHistory.length === 0} title={dataHistory.length === 0 ? '请先下载或导入财报数据' : '导出当前财务数据到本地'}>
                 导出本地财报
               </button>
             </div>
@@ -2360,7 +2447,7 @@ function App() {
               <button className="btn primary" onClick={handleDownload} disabled={downloading || loading}>
                 下载财报
               </button>
-              <button className="btn primary" onClick={handleAnalyze} disabled={analyzing || downloading || loading || dataHistory.length === 0} title={dataHistory.length === 0 ? '请先下载或导入财报数据' : ''}>
+              <button className="btn primary" onClick={handleAnalyze} disabled={analyzing || downloading || loading || dataHistory.length === 0 || dataMissing} title={dataHistory.length === 0 || dataMissing ? '请先下载或导入财报数据' : ''}>
                 财报分析
               </button>
             </div>
@@ -2460,7 +2547,11 @@ function App() {
               </Collapsible>
             )}
 
-            <Collapsible title="🚀 概念 & 风口">
+            {(report?.riskAlert || currentSnapshot?.riskAlert) && (
+              <RiskAlertBanner alert={report?.riskAlert || currentSnapshot?.riskAlert} />
+            )}
+
+            <Collapsible title="🚀 概念与风口">
               <div className="concept-panel" style={{ marginTop: 0, marginBottom: 0 }}>
                 <div className="concept-wind">{concepts?.wind || '--'}</div>
                 {concepts && concepts.concepts.length > 0 ? (
@@ -2846,6 +2937,9 @@ function App() {
                               {watchlist.some((w) => w.code === quickAnalysisData.code) && (
                                 <span style={{ fontSize: 10, color: '#3b82f6', background: 'rgba(59,130,246,0.1)', padding: '1px 5px', borderRadius: 4 }}>自选</span>
                               )}
+                              {quickAnalysisData.riskAlert && quickAnalysisData.riskAlert.level !== 'low' && (
+                                <RiskBadge level={quickAnalysisData.riskAlert.level} size="small" />
+                              )}
                             </div>
                             <button
                               className="btn-text"
@@ -2942,6 +3036,21 @@ function App() {
                               </div>
                             </div>
                           </div>
+
+                          {/* 风险摘要 */}
+                          {quickAnalysisData.riskAlert && quickAnalysisData.riskAlert.level !== 'low' && (
+                            <div style={{ padding: '6px 10px', fontSize: 11, borderTop: '1px solid rgba(148,163,184,0.1)', background: quickAnalysisData.riskAlert.level === 'high' ? 'rgba(239,68,68,0.05)' : 'rgba(245,158,11,0.05)' }}>
+                              <span style={{ color: quickAnalysisData.riskAlert.level === 'high' ? '#fca5a5' : '#fcd34d', fontWeight: 600 }}>
+                                {quickAnalysisData.riskAlert.level === 'high' ? '🔴' : '🟡'} {quickAnalysisData.riskAlert.primaryMsg}
+                              </span>
+                              {quickAnalysisData.riskAlert.flags && quickAnalysisData.riskAlert.flags.length > 0 && (
+                                <span style={{ color: '#94a3b8', marginLeft: 6 }}>
+                                  {quickAnalysisData.riskAlert.flags.slice(0, 2).map((f: any) => f.name).join(' · ')}
+                                  {quickAnalysisData.riskAlert.flags.length > 2 && ` +${quickAnalysisData.riskAlert.flags.length - 2}`}
+                                </span>
+                              )}
+                            </div>
+                          )}
 
                           {/* 错误提示 */}
                           {quickAnalysisData.errors && quickAnalysisData.errors.length > 0 && (

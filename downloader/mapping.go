@@ -3,6 +3,7 @@ package downloader
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -50,7 +51,7 @@ var balanceSheetMap = map[string]string{
 	"CAPITAL_RESERVE":              "资本公积",
 	"SURPLUS_RESERVE":              "盈余公积",
 	"RETAINED_EARNINGS":            "未分配利润",
-	"PARENT_EQUITY":                "归属于母公司所有者权益合计",
+	"PARENT_EQUITY_BALANCE":        "归属于母公司所有者权益合计",
 	"MINORITY_EQUITY":              "少数股东权益",
 }
 
@@ -125,6 +126,27 @@ func mergeBalanceSheet(target map[string]map[string]float64, src map[string]any,
 			target[stdName] = make(map[string]float64)
 		}
 		target[stdName][year] = v
+	}
+	// 修复：东方财富 API 中 PARENT_EQUITY 经常为 0，用 TOTAL_EQUITY - MINORITY_EQUITY 近似
+	parentEquity := extractFloat(src["PARENT_EQUITY_BALANCE"])
+	// 兼容旧版 API 字段名
+	if math.Abs(parentEquity) < 1 {
+		parentEquity = extractFloat(src["PARENT_EQUITY"])
+	}
+	totalEquity := extractFloat(src["TOTAL_EQUITY"])
+	minorityEquity := extractFloat(src["MINORITY_EQUITY"])
+	if math.Abs(parentEquity) < 1 && totalEquity != 0 {
+		calculatedParent := totalEquity - minorityEquity
+		if math.Abs(calculatedParent) > 1 {
+			target["归属于母公司所有者权益合计"][year] = calculatedParent
+		}
+	}
+	// 反向修复：TOTAL_EQUITY 为 0 但 PARENT_EQUITY 有值时
+	if math.Abs(totalEquity) < 1 && math.Abs(parentEquity) > 1 {
+		calculatedTotal := parentEquity + minorityEquity
+		if math.Abs(calculatedTotal) > 1 {
+			target["所有者权益合计"][year] = calculatedTotal
+		}
 	}
 	// 额外计算：应付票据及应付账款 = 应付票据 + 应付账款
 	// 应收票据及应收账款 = 应收票据 + 应收账款

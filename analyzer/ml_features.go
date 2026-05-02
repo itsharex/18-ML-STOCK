@@ -348,8 +348,12 @@ func BuildMLEngineDInput(data *FinancialData) []float64 {
 
 // safeDivide 安全除法
 func safeDivide(a, b float64) float64 {
-	if b == 0 || math.IsNaN(b) {
+	if b == 0 || math.IsNaN(b) || math.IsInf(b, 0) {
 		return 0
 	}
-	return a / b
+	result := a / b
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return 0
+	}
+	return result
 }

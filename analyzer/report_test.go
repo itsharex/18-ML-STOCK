@@ -96,7 +96,7 @@ func TestGenerateMarkdownMock(t *testing.T) {
 		"2023": {RawScore: 75.0, Grade: "B-", PassCount: 10, FailCount: 5},
 	}
 
-	md := GenerateMarkdown("603501 豪威集团", years, steps, scores, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	md := GenerateMarkdown("603501 豪威集团", years, steps, scores, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if !strings.Contains(md, "603501 豪威集团") {
 		t.Error("missing symbol")
 	}
@@ -108,4 +108,24 @@ func TestGenerateMarkdownMock(t *testing.T) {
 	}
 	fmt.Println(md[:2000])
 	fmt.Println("\n... (truncated) ...")
+}
+
+// TestInfoTooltipHTML 验证 tooltip 使用 span 结构而非 details
+func TestInfoTooltipHTML(t *testing.T) {
+	html := infoTooltipHTML("测试标题", "测试内容")
+	if strings.Contains(html, "<details") {
+		t.Error("infoTooltipHTML 不应使用 <details> 标签")
+	}
+	if !strings.Contains(html, `<span class="inline-tooltip">`) {
+		t.Error("infoTooltipHTML 应包含 <span class=\"inline-tooltip\">")
+	}
+	if !strings.Contains(html, `<span class="inline-tooltip-trigger">`) {
+		t.Error("infoTooltipHTML 应包含 inline-tooltip-trigger")
+	}
+	if !strings.Contains(html, `<span class="inline-tooltip-body">`) {
+		t.Error("infoTooltipHTML 应包含 inline-tooltip-body")
+	}
+	if !strings.Contains(html, "ℹ️") {
+		t.Error("infoTooltipHTML 应包含 ℹ️ 图标")
+	}
 }

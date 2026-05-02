@@ -1,5 +1,67 @@
 export namespace analyzer {
 	
+	export class RiskAlertFlag {
+	    code: string;
+	    name: string;
+	    value: number;
+	    format: string;
+	    level: string;
+	    source: string;
+	    details: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new RiskAlertFlag(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.code = source["code"];
+	        this.name = source["name"];
+	        this.value = source["value"];
+	        this.format = source["format"];
+	        this.level = source["level"];
+	        this.source = source["source"];
+	        this.details = source["details"];
+	    }
+	}
+	export class RiskAlertSummary {
+	    level: string;
+	    score: number;
+	    oneVeto: boolean;
+	    flags: RiskAlertFlag[];
+	    primaryMsg: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RiskAlertSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.level = source["level"];
+	        this.score = source["score"];
+	        this.oneVeto = source["oneVeto"];
+	        this.flags = this.convertValues(source["flags"], RiskAlertFlag);
+	        this.primaryMsg = source["primaryMsg"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RIMScenario {
 	    ROE: number;
 	    Value: number;
@@ -318,6 +380,8 @@ export namespace analyzer {
 	    rim?: RIMData;
 	    highlights: string[];
 	    risks: string[];
+	    riskAlert?: RiskAlertSummary;
+	    qualityWarnings?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new AnalysisReport(source);
@@ -336,6 +400,8 @@ export namespace analyzer {
 	        this.rim = this.convertValues(source["rim"], RIMData);
 	        this.highlights = source["highlights"];
 	        this.risks = source["risks"];
+	        this.riskAlert = this.convertValues(source["riskAlert"], RiskAlertSummary);
+	        this.qualityWarnings = source["qualityWarnings"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -409,6 +475,8 @@ export namespace analyzer {
 	        this.value = source["value"];
 	    }
 	}
+	
+	
 	
 	
 	
@@ -718,6 +786,7 @@ export namespace main {
 	    lastAnalysisAt: string;
 	    dataChanged: boolean;
 	    comparablesChanged: boolean;
+	    dataMissing: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CacheStatus(source);
@@ -729,6 +798,7 @@ export namespace main {
 	        this.lastAnalysisAt = source["lastAnalysisAt"];
 	        this.dataChanged = source["dataChanged"];
 	        this.comparablesChanged = source["comparablesChanged"];
+	        this.dataMissing = source["dataMissing"];
 	    }
 	}
 	export class DownloadResult {
@@ -970,6 +1040,7 @@ export namespace main {
 	    has_sentiment_data: boolean;
 	    concepts: string[];
 	    concept_match: string[];
+	    riskAlert?: analyzer.RiskAlertSummary;
 	    errors: string[];
 	
 	    static createFrom(source: any = {}) {
@@ -1003,8 +1074,27 @@ export namespace main {
 	        this.has_sentiment_data = source["has_sentiment_data"];
 	        this.concepts = source["concepts"];
 	        this.concept_match = source["concept_match"];
+	        this.riskAlert = this.convertValues(source["riskAlert"], analyzer.RiskAlertSummary);
 	        this.errors = source["errors"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class StockInfo {
 	    code: string;

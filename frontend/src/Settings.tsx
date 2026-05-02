@@ -13,6 +13,7 @@ export interface AppSettings {
   reportYears: number
   autoUpdateIndustryDB: boolean
   analysisNotification: boolean
+  riskSensitivity: 'strict' | 'standard' | 'loose'
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -25,6 +26,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   reportYears: 5,
   autoUpdateIndustryDB: true,
   analysisNotification: true,
+  riskSensitivity: 'standard',
 }
 
 const SETTINGS_KEY = 'stockfinlens-settings-v1'
@@ -97,13 +99,13 @@ export function Settings({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // Tushare 配置状态
+  // StockFinLens 数据源配置状态
   const [tushareCfg, setTushareCfg] = useState<main.TushareConfig | null>(null)
   const [tushareLoading, setTushareLoading] = useState(false)
   const [tushareVerifyStatus, setTushareVerifyStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
   const [tushareSaving, setTushareSaving] = useState(false)
 
-  // 加载 Tushare 配置
+  // 加载数据源配置
   useEffect(() => {
     GetTushareConfig().then((cfg) => {
       setTushareCfg(cfg)
@@ -223,6 +225,22 @@ export function Settings({
                 </div>
               </div>
 
+              {/* 风险警示敏感度 */}
+              <div className="settings-item settings-item-inline">
+                <label>风险警示敏感度</label>
+                <div className="settings-input-group">
+                  <select
+                    value={settings.riskSensitivity}
+                    onChange={(e) => updateSetting('riskSensitivity', e.target.value as 'strict' | 'standard' | 'loose')}
+                    style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(148,163,184,0.3)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: 13 }}
+                  >
+                    <option value="strict">严格（A-Score≥50即中风险）</option>
+                    <option value="standard">标准（默认）</option>
+                    <option value="loose">宽松（A-Score≥60才中风险）</option>
+                  </select>
+                </div>
+              </div>
+
               {/* 数据管理分割线 */}
               <div className="settings-divider" />
 
@@ -305,17 +323,17 @@ export function Settings({
                 )}
               </div>
 
-              {/* Tushare Pro 数据源 */}
+              {/* StockFinLens 数据源 */}
               <div className="settings-data-section">
-                <div className="settings-data-title">📊 Tushare Pro 数据源</div>
+                <div className="settings-data-title">📊 StockFinLens 数据源</div>
                 <div className="settings-data-desc">
-                  启用 Tushare 作为主要数据源，提升数据稳定性（需 tushare.pro 账号）
+                  启用 StockFinLens 数据源，提升数据稳定性
                 </div>
 
                 {tushareCfg && (
                   <>
                     <div className="settings-item settings-item-inline" style={{ marginTop: 8 }}>
-                      <label>启用 Tushare</label>
+                      <label>启用 StockFinLens</label>
                       <div className="settings-toggle-switch">
                         <label className="switch">
                           <input
@@ -331,12 +349,12 @@ export function Settings({
                     {tushareCfg.enabled && (
                       <>
                         <div className="settings-item" style={{ marginTop: 8 }}>
-                          <label>Token</label>
+                          <label>授权码</label>
                           <input
                             type="password"
                             value={tushareCfg.token}
                             onChange={(e) => setTushareCfg({ ...tushareCfg, token: e.target.value, verified: false })}
-                            placeholder="请输入 Tushare Pro Token"
+                            placeholder="请输入授权码"
                             style={{ width: '100%', marginTop: 4 }}
                           />
                           {tushareCfg.verified && (

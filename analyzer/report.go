@@ -14,7 +14,7 @@ func sign(v float64) string {
 	return ""
 }
 
-func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores map[string]*YearScore, comp *ComparableAnalysis, industry *IndustryComparison, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData, ml *MLPredictionData, rim *RIMData) string {
+func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores map[string]*YearScore, comp *ComparableAnalysis, industry *IndustryComparison, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData, ml *MLPredictionData, rim *RIMData, riskAlert *RiskAlertSummary, qualityWarnings []string) string {
 	if len(years) == 0 {
 		return "# 无数据\n\n未找到可用的财务数据。"
 	}
@@ -35,8 +35,21 @@ func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores 
 	b.WriteString(fmt.Sprintf("**数据基础**: 基于 %d 年财务报表数据（%s ~ %s）\n\n", len(years), latest, years[len(years)-1]))
 	b.WriteString("---\n\n")
 
+	// ==================== 数据质量警告（新增）====================
+	if len(qualityWarnings) > 0 {
+		writeDataQualityWarnings(&b, qualityWarnings)
+	}
+
+	// ==================== 风险警示横幅（新增）====================
+	if riskAlert != nil {
+		writeRiskAlertBanner(&b, riskAlert)
+	}
+
 	// ==================== 重大风险提示 ====================
-	writeMajorRisks(&b, symbol, steps, latest, prev, latestScore)
+	// 当风险警示已覆盖主要风险时，跳过重大风险提示模块，避免内容重叠
+	if riskAlert == nil || riskAlert.Level == "low" {
+		writeMajorRisks(&b, symbol, steps, latest, prev, latestScore)
+	}
 
 	// ==================== 模块1: 执行摘要 ====================
 	writeModule1(&b, symbol, steps, latest, prev, latestScore, quote, technical, activity, ml)
@@ -96,6 +109,72 @@ func GenerateMarkdown(symbol string, years []string, steps []StepResult, scores 
 	return b.String()
 }
 
+// ========== 风险警示横幅（新增）==========
+func writeRiskAlertBanner(b *strings.Builder, alert *RiskAlertSummary) {
+	if alert == nil || alert.Level == "low" {
+		return
+	}
+
+	// 统计 high/medium 数量，混合时标题显示"中高风险"
+	highCount := 0
+	mediumCount := 0
+	for _, f := range alert.Flags {
+		if f.Level == "high" {
+			highCount++
+		} else if f.Level == "medium" {
+			mediumCount++
+		}
+	}
+	levelTitle := "🔴 高风险警示"
+	color := "#ef4444"
+	if alert.Level == "medium" {
+		levelTitle = "🟡 中风险警示"
+		color = "#f59e0b"
+	} else if alert.Level == "high" && mediumCount > 0 {
+		levelTitle = "🔴 中高风险警示"
+	}
+	if alert.OneVeto {
+		levelTitle += "（一票否决）"
+	}
+
+	b.WriteString(fmt.Sprintf("<div style=\"border-left: 4px solid %s; padding: 12px 16px; margin: 16px 0; background: %s08; border-radius: 6px;\">\n\n", color, color))
+
+	// 标题 + 信息图标（紧跟文字，风格与报告其它 infoIcon 一致）
+	totalFlags := len(alert.Flags)
+	b.WriteString(fmt.Sprintf("### %s（共%d项）", levelTitle, totalFlags))
+	b.WriteString(infoTooltipHTML("风险警示功能说明", "本模块从三大维度检测股票风险：<br>1. <strong>一票否决</strong>（单项即高风险）：审计意见非标、年报前更换审计机构、核心财务负责人频繁更换、资金占用/违规担保/诉讼、经营现金流连续2年为负、资产负债率>85%、营收同比<-30%、大股东质押>70%、一年内监管问询≥3次、毛利率为负。<br>2. <strong>二级指标</strong>（3项及以上中风险）：A-Score 60–69分、M-Score>-1.78、毛利率下降>10百分点、ROE<5%、净利润现金含量<80%、应收+存货占比>40%、营收同比<0%、负债率70%–85%、商誉占比>50%、DEPI>1.1。<br>3. <strong>外部数据</strong>：审计机构变更、高管变动、诉讼担保、大股东减持、股权质押、监管问询等。"))
+	b.WriteString("\n\n")
+
+	// 风险项表格
+	if len(alert.Flags) > 0 {
+		b.WriteString("| 警示 | 风险指标 | 数值说明 | 等级 |\n")
+		b.WriteString("|:----:|----------|----------|------|\n")
+		for _, f := range alert.Flags {
+			flagIcon := "🟡"
+			flagLevel := "中风险"
+			if f.Level == "high" {
+				flagIcon = "🔴"
+				flagLevel = "高风险"
+			}
+			detailTrigger := ""
+			if len(f.Details) > 0 {
+				body := strings.Join(f.Details, "<br/>")
+				detailTrigger = " " + infoTooltipHTML(f.Name, body)
+			}
+			b.WriteString(fmt.Sprintf("| %s | %s | %s%s | %s |\n", flagIcon, f.Name, f.FormatFlagValue(), detailTrigger, flagLevel))
+		}
+		b.WriteString("\n")
+	}
+
+	// 一票否决提示
+	if alert.OneVeto {
+		b.WriteString("> ⚠️ **一票否决**: 该股票触发了排雷检查清单中的铁律指标，建议深入核查后再做投资决策。\n\n")
+	}
+
+	b.WriteString("</div>\n\n")
+	b.WriteString("---\n\n")
+}
+
 // ========== 重大风险提示 ==========
 func writeMajorRisks(b *strings.Builder, symbol string, steps []StepResult, latest, prev string, score *YearScore) {
 	var risks []string
@@ -135,7 +214,7 @@ func writeMajorRisks(b *strings.Builder, symbol string, steps []StepResult, late
 	}
 
 	if len(risks) > 0 || (score != nil && score.RawScore < 70) {
-		b.WriteString("# ⚠️ 重大风险提示\n\n")
+		b.WriteString("# ⚠️ 风险提示\n\n")
 		for _, r := range risks {
 			b.WriteString(fmt.Sprintf("- %s\n", r))
 		}
@@ -2305,7 +2384,7 @@ func fmtVal(v float64, unit string) string {
 }
 
 func infoTooltipHTML(title, body string) string {
-	return fmt.Sprintf(`<details class="inline-tooltip"><summary>ℹ️</summary><div class="inline-tooltip-body"><strong>%s</strong><br/>%s</div></details>`, title, body)
+	return fmt.Sprintf(`<span class="inline-tooltip"><span class="inline-tooltip-trigger">ℹ️</span><span class="inline-tooltip-body"><strong>%s</strong><br/>%s</span></span>`, title, body)
 }
 
 func infoIcon(title, body string) string {
@@ -2747,4 +2826,46 @@ func aScoreTooltip() string {
 </details>
 
 `
+}
+
+// writeDataQualityWarnings 在报告中显示数据质量警告
+func writeDataQualityWarnings(b *strings.Builder, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	var critical []string // 可能影响分析结果的问题
+	var minor []string    // 数据源精度/舍入问题，不影响核心指标
+
+	for _, w := range warnings {
+		if strings.Contains(w, "数据源精度") || strings.Contains(w, "舍入") || strings.Contains(w, "不平衡") {
+			minor = append(minor, w)
+		} else {
+			critical = append(critical, w)
+		}
+	}
+
+	b.WriteString("<div style=\"border-left: 4px solid #f59e0b; padding: 12px 16px; margin: 16px 0; background: #fef3c708; border-radius: 6px;\">\n\n")
+	b.WriteString("## ⚠️ 数据质量提示\n\n")
+	b.WriteString("> 财务数据来自东方财富 API（免费数据源），部分科目存在精度/舍入差异，属第三方数据源限制，非分析模型错误。\n\n")
+
+	if len(critical) > 0 {
+		b.WriteString("**以下问题可能影响分析准确性，建议关注：**\n\n")
+		for _, w := range critical {
+			b.WriteString(fmt.Sprintf("- 🔴 %s\n", w))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(minor) > 0 {
+		b.WriteString("**以下差异为数据源精度/舍入问题，不影响 ROE、毛利率、增长率等核心指标：**\n\n")
+		for _, w := range minor {
+			b.WriteString(fmt.Sprintf("- 🟡 %s\n", w))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("> 💡 **建议**：如对本数据有疑虑，可通过「导入财报」功能手动导入同花顺/东方财富下载的原始 CSV/Excel 财报进行复核。\n\n")
+	b.WriteString("</div>\n\n")
+	b.WriteString("---\n\n")
 }
