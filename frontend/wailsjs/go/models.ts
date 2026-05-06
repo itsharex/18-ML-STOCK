@@ -1106,6 +1106,46 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class SFLConfig {
+	    enabled: boolean;
+	    token: string;
+	    verified: boolean;
+	    verified_at: string;
+	    use_for_financial: boolean;
+	    use_for_kline: boolean;
+	    use_for_quote: boolean;
+	    use_for_moneyflow: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SFLConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.token = source["token"];
+	        this.verified = source["verified"];
+	        this.verified_at = source["verified_at"];
+	        this.use_for_financial = source["use_for_financial"];
+	        this.use_for_kline = source["use_for_kline"];
+	        this.use_for_quote = source["use_for_quote"];
+	        this.use_for_moneyflow = source["use_for_moneyflow"];
+	    }
+	}
+	export class SFLVerifyResult {
+	    success: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SFLVerifyResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.success = source["success"];
+	        this.message = source["message"];
+	    }
+	}
 	export class StockInfo {
 	    code: string;
 	    name: string;
@@ -1218,46 +1258,6 @@ export namespace main {
 	        this.chairmanHoldRatio = source["chairmanHoldRatio"];
 	        this.politicalAffiliation = source["politicalAffiliation"];
 	        this.updatedAt = source["updatedAt"];
-	    }
-	}
-	export class TushareConfig {
-	    enabled: boolean;
-	    token: string;
-	    verified: boolean;
-	    verified_at: string;
-	    use_for_financial: boolean;
-	    use_for_kline: boolean;
-	    use_for_quote: boolean;
-	    use_for_moneyflow: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new TushareConfig(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	        this.token = source["token"];
-	        this.verified = source["verified"];
-	        this.verified_at = source["verified_at"];
-	        this.use_for_financial = source["use_for_financial"];
-	        this.use_for_kline = source["use_for_kline"];
-	        this.use_for_quote = source["use_for_quote"];
-	        this.use_for_moneyflow = source["use_for_moneyflow"];
-	    }
-	}
-	export class TushareVerifyResult {
-	    success: boolean;
-	    message: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new TushareVerifyResult(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.success = source["success"];
-	        this.message = source["message"];
 	    }
 	}
 	export class WatchlistActivitySummary {

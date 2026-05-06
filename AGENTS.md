@@ -23,7 +23,7 @@
 | 图表 | Apache ECharts、lightweight-charts、recharts | `^6.0.0`、`^5.1.0`、`^2.10.0` |
 | Markdown 渲染 | react-markdown + rehype/rehype 插件 | `^10.1.0` |
 | ML 推理 | Python 3 + ONNX Runtime + scikit-learn + numpy | 运行时通过 `deps_manager.go` 自动检测 |
-| 数据获取 | 东方财富 API、腾讯财经接口、Tushare、Yahoo、akshare（港股）、同花顺 CSV/Excel 导入 |
+| 数据获取 | 东方财富 API、腾讯财经接口、StockFinLens、Yahoo、akshare（港股）、同花顺 CSV/Excel 导入 |
 | Excel/CSV | `github.com/xuri/excelize/v2`、标准库 `encoding/csv` | excelize `v2.10.1` |
 | 通知 | `git.sr.ht/~jackmordaunt/go-toast/v2`（Windows Toast）| `v2.0.3` |
 
@@ -91,9 +91,9 @@ stockfinlens/
 │   └── report_test.go            # 报告生成测试
 │
 ├── downloader/                   # 数据下载与爬取层（所有网络 I/O，20+ 个文件）
-│   ├── data_router.go            # 数据源路由：StockFinLens(Tushare) vs 备用源，按类别切换
+│   ├── data_router.go            # 数据源路由：StockFinLens(StockFinLens) vs 备用源，按类别切换
 │   ├── eastmoney.go              # 东方财富 API（财报、资料、行情、K线、概念，~1360 行）
-│   ├── tushare.go                # Tushare Pro HTTP JSON API 封装（~800 行）
+│   ├── sfl_datasource.go                # StockFinLens Pro HTTP JSON API 封装（~800 行）
 │   ├── tencent.go                # 腾讯财经 f10 财报与实时行情备用源
 │   ├── yahoo.go                  # Yahoo Finance K线与行情备用源（HK/A 股映射）
 │   ├── sentiment.go              # 舆情情绪数据抓取（东财研报/公告/新浪新闻三层回退）

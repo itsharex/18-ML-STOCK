@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './Settings.css'
-import { GetTushareConfig, SaveTushareConfig, VerifyTushareToken } from '../wailsjs/go/main/App'
+import { GetSFLConfig, SaveSFLConfig, VerifySFLToken } from '../wailsjs/go/main/App'
 import type { main } from '../wailsjs/go/models'
 
 export interface AppSettings {
@@ -100,52 +100,52 @@ export function Settings({
   const buttonRef = useRef<HTMLButtonElement>(null)
 
   // StockFinLens 数据源配置状态
-  const [tushareCfg, setTushareCfg] = useState<main.TushareConfig | null>(null)
-  const [tushareLoading, setTushareLoading] = useState(false)
-  const [tushareVerifyStatus, setTushareVerifyStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
-  const [tushareSaving, setTushareSaving] = useState(false)
+  const [sflCfg, setSflCfg] = useState<main.SFLConfig | null>(null)
+  const [sflLoading, setSflLoading] = useState(false)
+  const [sflVerifyStatus, setSflVerifyStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
+  const [sflSaving, setSflSaving] = useState(false)
 
   // 加载数据源配置
   useEffect(() => {
-    GetTushareConfig().then((cfg) => {
-      setTushareCfg(cfg)
+    GetSFLConfig().then((cfg) => {
+      setSflCfg(cfg)
     }).catch(() => {
-      setTushareCfg({
+      setSflCfg({
         enabled: false, token: '', verified: false, verified_at: '',
         use_for_financial: true, use_for_kline: true, use_for_quote: true, use_for_moneyflow: true
-      } as main.TushareConfig)
+      } as main.SFLConfig)
     })
   }, [isOpen])
 
-  const handleVerifyTushare = useCallback(async () => {
-    if (!tushareCfg?.token) return
-    setTushareVerifyStatus({type: null, message: ''})
-    setTushareLoading(true)
+  const handleVerifySFL = useCallback(async () => {
+    if (!sflCfg?.token) return
+    setSflVerifyStatus({type: null, message: ''})
+    setSflLoading(true)
     try {
-      const result = await VerifyTushareToken(tushareCfg.token)
-      setTushareVerifyStatus({type: result.success ? 'success' : 'error', message: result.message || '验证失败'})
+      const result = await VerifySFLToken(sflCfg.token)
+      setSflVerifyStatus({type: result.success ? 'success' : 'error', message: result.message || '验证失败'})
       if (result.success) {
-        setTushareCfg(prev => prev ? {...prev, verified: true, verified_at: new Date().toISOString()} : prev)
+        setSflCfg(prev => prev ? {...prev, verified: true, verified_at: new Date().toISOString()} : prev)
       }
     } catch (err: any) {
-      setTushareVerifyStatus({type: 'error', message: err?.message || '验证失败'})
+      setSflVerifyStatus({type: 'error', message: err?.message || '验证失败'})
     } finally {
-      setTushareLoading(false)
+      setSflLoading(false)
     }
-  }, [tushareCfg?.token])
+  }, [sflCfg?.token])
 
-  const handleSaveTushare = useCallback(async () => {
-    if (!tushareCfg) return
-    setTushareSaving(true)
+  const handleSaveSFL = useCallback(async () => {
+    if (!sflCfg) return
+    setSflSaving(true)
     try {
-      await SaveTushareConfig(tushareCfg)
-      setTushareVerifyStatus({type: 'success', message: '配置已保存'})
+      await SaveSFLConfig(sflCfg)
+      setSflVerifyStatus({type: 'success', message: '配置已保存'})
     } catch (err: any) {
-      setTushareVerifyStatus({type: 'error', message: err?.message || '保存失败'})
+      setSflVerifyStatus({type: 'error', message: err?.message || '保存失败'})
     } finally {
-      setTushareSaving(false)
+      setSflSaving(false)
     }
-  }, [tushareCfg])
+  }, [sflCfg])
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -330,7 +330,7 @@ export function Settings({
                   启用 StockFinLens 数据源，提升数据稳定性
                 </div>
 
-                {tushareCfg && (
+                {sflCfg && (
                   <>
                     <div className="settings-item settings-item-inline" style={{ marginTop: 8 }}>
                       <label>启用 StockFinLens</label>
@@ -338,28 +338,28 @@ export function Settings({
                         <label className="switch">
                           <input
                             type="checkbox"
-                            checked={tushareCfg.enabled}
-                            onChange={(e) => setTushareCfg({ ...tushareCfg, enabled: e.target.checked })}
+                            checked={sflCfg.enabled}
+                            onChange={(e) => setSflCfg({ ...sflCfg, enabled: e.target.checked })}
                           />
                           <span className="slider"></span>
                         </label>
                       </div>
                     </div>
 
-                    {tushareCfg.enabled && (
+                    {sflCfg.enabled && (
                       <>
                         <div className="settings-item" style={{ marginTop: 8 }}>
                           <label>授权码</label>
                           <input
                             type="password"
-                            value={tushareCfg.token}
-                            onChange={(e) => setTushareCfg({ ...tushareCfg, token: e.target.value, verified: false })}
+                            value={sflCfg.token}
+                            onChange={(e) => setSflCfg({ ...sflCfg, token: e.target.value, verified: false })}
                             placeholder="请输入授权码"
                             style={{ width: '100%', marginTop: 4 }}
                           />
-                          {tushareCfg.verified && (
+                          {sflCfg.verified && (
                             <div style={{ fontSize: 11, color: '#22c55e', marginTop: 2 }}>
-                              ✅ 已验证{tushareCfg.verified_at ? ` · ${tushareCfg.verified_at.slice(0, 10)}` : ''}
+                              ✅ 已验证{sflCfg.verified_at ? ` · ${sflCfg.verified_at.slice(0, 10)}` : ''}
                             </div>
                           )}
                         </div>
@@ -367,26 +367,26 @@ export function Settings({
                         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                           <button
                             className="settings-data-btn"
-                            onClick={handleVerifyTushare}
-                            disabled={tushareLoading || !tushareCfg.token}
+                            onClick={handleVerifySFL}
+                            disabled={sflLoading || !sflCfg.token}
                           >
-                            {tushareLoading ? '验证中...' : '🔍 验证连通性'}
+                            {sflLoading ? '验证中...' : '🔍 验证连通性'}
                           </button>
                           <button
                             className="settings-data-btn"
-                            onClick={handleSaveTushare}
-                            disabled={tushareSaving}
+                            onClick={handleSaveSFL}
+                            disabled={sflSaving}
                           >
-                            {tushareSaving ? '保存中...' : '💾 保存配置'}
+                            {sflSaving ? '保存中...' : '💾 保存配置'}
                           </button>
                         </div>
 
-                        {tushareVerifyStatus.type && (
+                        {sflVerifyStatus.type && (
                           <div className="settings-action-status">
-                            {tushareVerifyStatus.type === 'success' ? (
-                              <span className="status-success">{tushareVerifyStatus.message}</span>
+                            {sflVerifyStatus.type === 'success' ? (
+                              <span className="status-success">{sflVerifyStatus.message}</span>
                             ) : (
-                              <span className="status-error">{tushareVerifyStatus.message}</span>
+                              <span className="status-error">{sflVerifyStatus.message}</span>
                             )}
                           </div>
                         )}
@@ -394,10 +394,10 @@ export function Settings({
                         <div className="settings-item" style={{ marginTop: 8, fontSize: 12 }}>
                           <label style={{ marginBottom: 4 }}>启用范围</label>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            <label><input type="checkbox" checked={tushareCfg.use_for_financial} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_financial: e.target.checked })} /> 财报数据</label>
-                            <label><input type="checkbox" checked={tushareCfg.use_for_kline} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_kline: e.target.checked })} /> 历史K线</label>
-                            <label><input type="checkbox" checked={tushareCfg.use_for_quote} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_quote: e.target.checked })} /> 每日指标（PE/PB/市值）</label>
-                            <label><input type="checkbox" checked={tushareCfg.use_for_moneyflow} onChange={(e) => setTushareCfg({ ...tushareCfg, use_for_moneyflow: e.target.checked })} /> 个股资金流向</label>
+                            <label><input type="checkbox" checked={sflCfg.use_for_financial} onChange={(e) => setSflCfg({ ...sflCfg, use_for_financial: e.target.checked })} /> 财报数据</label>
+                            <label><input type="checkbox" checked={sflCfg.use_for_kline} onChange={(e) => setSflCfg({ ...sflCfg, use_for_kline: e.target.checked })} /> 历史K线</label>
+                            <label><input type="checkbox" checked={sflCfg.use_for_quote} onChange={(e) => setSflCfg({ ...sflCfg, use_for_quote: e.target.checked })} /> 每日指标（PE/PB/市值）</label>
+                            <label><input type="checkbox" checked={sflCfg.use_for_moneyflow} onChange={(e) => setSflCfg({ ...sflCfg, use_for_moneyflow: e.target.checked })} /> 个股资金流向</label>
                           </div>
                         </div>
                       </>

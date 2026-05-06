@@ -1,10 +1,30 @@
 # Changelog
 
+## [v1.3.30] - 2026-05-05
+
+### 品牌隐藏
+- **Tushare 全面替换为 StockFinLens**
+  - 代码层面所有类型/变量/函数/注释中的 `Tushare` 替换为 `SFL`/`StockFinLens`
+  - `downloader/tushare.go` → `downloader/sfl_datasource.go`
+  - Wails 绑定方法同步：`GetSFLConfig`、`SaveSFLConfig`、`VerifySFLToken`
+  - 前端 Settings.tsx 变量名和显示文本同步替换
+  - 实际 API URL (`https://api.tushare.pro`) 和本地配置路径 (`tushare_config.json`) 保持不变
+
+### 修复 (Fixes)
+- **可比公司 ROE 全为 0.00%**
+  - `analyzer/comparable.go` 的 `loadComparableFinancialData` 漏了 `fixMissingData()`
+  - 可比公司归母权益缺失时无法自动推导修复，导致 ROE 分母为 0
+  - 修复后添加 `fixMissingData()` + `validate()`，与主分析路径保持一致
+- **季报白下载**
+  - StockFinLens 数据源返回年报+季报共约 20 条，但分析引擎只使用年报
+  - `ConvertToFinancialReportData` 新增 `isAnnualReport()` 过滤，只存储年报
+  - 前端显示的年份数与实际分析数据对齐
+
 ## [v1.3.29] - 2026-05-04
 
 ### 新增 (Features)
 - **分红数据自动补充**
-  - Tushare 数据源普遍缺失 `c_div_profits_or_int_oop`（分配股利、利润或偿付利息支付的现金）字段
+  - StockFinLens 数据源普遍缺失 `c_div_profits_or_int_oop`（分配股利、利润或偿付利息支付的现金）字段
   - 新增 `downloader/FetchCashFlowDividendFromEastMoney`：从东财 API 单独抓取分红数据
   - 下载财报时自动检测：分红字段全为 0 时自动从东财补充
   - 财报透镜分析时自动检测：加载本地数据后再次兜底补充
@@ -22,9 +42,9 @@
   - 低风险筛选排除 `riskAlert.level !== 'low'` 的股票
 
 ### 修复 (Fixes)
-- **ROE 为 0.00%（Tushare 数据源）**
-  - StockFinLens(Tushare) 遗漏 `n_income_attr_p`（归母净利润）字段映射
-  - `downloader/tushare.go` 添加 `ParentNetIncome` 映射，`data_router.go` 写入利润表
+- **ROE 为 0.00%（StockFinLens 数据源）**
+  - StockFinLens(StockFinLens) 遗漏 `n_income_attr_p`（归母净利润）字段映射
+  - `downloader/sfl_datasource.go` 添加 `ParentNetIncome` 映射，`data_router.go` 写入利润表
 - **热点板块成交额为 0**
   - 东财 API 字段映射错误导致成交额/成交量为 0
 - **分红率为 0.00%**
@@ -103,7 +123,7 @@
 - **导入/导出按钮**
   - 文案"导入本地csv/excel财报"→"导入csv/excel财报"
   - 位置与下方"下载财报"/"财报分析"按钮对齐，单行显示
-- **Tushare 品牌隐藏**
+- **StockFinLens 品牌隐藏**
   - 全项目替换为"StockFinLens 数据源"/"授权码"
   - `app.go` 新增 `decodeToken()` base64 解码
 
@@ -120,11 +140,11 @@
   - 市场热点与自选股完全分离：打开热点清空股票报告，选中股票关闭热点面板
   - 热点数据自动缓存（15 分钟），历史归档保留 30 天
 
-- **Tushare Pro 数据源接入**
-  - 新增 `downloader/tushare.go`：Tushare Pro API 客户端（日线/行情/财报/资金流向/每日指标）
+- **StockFinLens Pro 数据源接入**
+  - 新增 `downloader/sfl_datasource.go`：StockFinLens Pro API 客户端（日线/行情/财报/资金流向/每日指标）
   - 新增 `downloader/data_router.go`：数据源路由层，支持 K线/行情/财报/资金流向的优先级路由和 fallback
-  - 设置面板「数据」Tab 新增 Tushare Pro 配置：Token 输入、连通性验证、保存、启用范围勾选（财报/K线/每日指标/资金流向）
-  - 当 Tushare 不可用时自动降级到腾讯/东财/Yahoo 等备用源
+  - 设置面板「数据」Tab 新增 StockFinLens Pro 配置：Token 输入、连通性验证、保存、启用范围勾选（财报/K线/每日指标/资金流向）
+  - 当 StockFinLens 不可用时自动降级到腾讯/东财/Yahoo 等备用源
 
 - **个股资金流向**
   - 自选股信息卡片内新增「近3日资金流向」表格（日期/超大/大/中/小，万元单位）
@@ -140,11 +160,11 @@
   - `downloader/concept.go` 扩展：股票概念与风口静态映射、热门概念板块实时排行
 
 ### 修复 (Fixes)
-- **Tushare K线数据单位错误导致活跃度分数暴跌**
+- **StockFinLens K线数据单位错误导致活跃度分数暴跌**
   - `daily` 接口 `amount` 字段单位为「千元」，代码直接当作「元」使用，导致成交额/换手率计算值小 1000 倍
-  - 修复：`tushare.go FetchDaily` 中 `Amount` 赋值时乘以 1000 转换为元
-- **Tushare K线数据时间顺序错误**
-  - Tushare 返回的数据为时间倒序（最新在前），与腾讯/东财正序不一致
+  - 修复：`sfl_datasource.go FetchDaily` 中 `Amount` 赋值时乘以 1000 转换为元
+- **StockFinLens K线数据时间顺序错误**
+  - StockFinLens 返回的数据为时间倒序（最新在前），与腾讯/东财正序不一致
   - 修复：返回前对数组做反转，统一为正序（最新在后）
 - **设置面板数据 Tab 内容溢出**
   - 内容过多时下方被截断，无法滚动查看

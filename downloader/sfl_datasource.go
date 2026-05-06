@@ -10,26 +10,26 @@ import (
 	"time"
 )
 
-const tushareBaseURL = "https://api.tushare.pro"
+const sflBaseURL = "https://api.tushare.pro"
 
-// TushareClient Tushare HTTP API 客户端
-type TushareClient struct {
+// SFLClient SFL HTTP API 客户端
+type SFLClient struct {
 	token   string
 	baseURL string
 	client  *http.Client
 }
 
-// NewTushareClient 创建 Tushare 客户端
-func NewTushareClient(token string) *TushareClient {
-	return &TushareClient{
+// NewSFLClient 创建 SFL 客户端
+func NewSFLClient(token string) *SFLClient {
+	return &SFLClient{
 		token:   token,
-		baseURL: tushareBaseURL,
+		baseURL: sflBaseURL,
 		client:  &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
 // query 通用查询方法
-func (c *TushareClient) query(apiName string, params map[string]interface{}, fields []string) (*tushareResponse, error) {
+func (c *SFLClient) query(apiName string, params map[string]interface{}, fields []string) (*sflResponse, error) {
 	reqBody := map[string]interface{}{
 		"api_name": apiName,
 		"token":    c.token,
@@ -61,7 +61,7 @@ func (c *TushareClient) query(apiName string, params map[string]interface{}, fie
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}
 
-	var result tushareResponse
+	var result sflResponse
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		prefix := 200
 		if len(respBody) < prefix {
@@ -77,8 +77,8 @@ func (c *TushareClient) query(apiName string, params map[string]interface{}, fie
 	return &result, nil
 }
 
-// tushareResponse Tushare 标准响应
-type tushareResponse struct {
+// sflResponse SFL 标准响应
+type sflResponse struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`
 	Data struct {
@@ -136,7 +136,7 @@ func getFloat(item []interface{}, idxMap map[string]int, field string) float64 {
 	return 0
 }
 
-// toTsCode 将 market+code 转为 Tushare 的 ts_code 格式
+// toTsCode 将 market+code 转为 SFL 的代码 格式
 func toTsCode(market, code string) string {
 	switch market {
 	case "SH":
@@ -167,8 +167,8 @@ func fromTsCode(tsCode string) (market, code string) {
 
 // ========== 股票基础信息 ==========
 
-// TushareStockBasic 股票基础信息
-type TushareStockBasic struct {
+// SFLStockBasic 股票基础信息
+type SFLStockBasic struct {
 	TsCode   string `json:"ts_code"`
 	Symbol   string `json:"symbol"`
 	Name     string `json:"name"`
@@ -180,7 +180,7 @@ type TushareStockBasic struct {
 }
 
 // FetchStockBasic 获取股票基础信息
-func (c *TushareClient) FetchStockBasic(tsCode string) (*TushareStockBasic, error) {
+func (c *SFLClient) FetchStockBasic(tsCode string) (*SFLStockBasic, error) {
 	params := map[string]interface{}{}
 	if tsCode != "" {
 		params["ts_code"] = tsCode
@@ -197,7 +197,7 @@ func (c *TushareClient) FetchStockBasic(tsCode string) (*TushareStockBasic, erro
 
 	idx := buildFieldIndex(resp.Data.Fields)
 	item := resp.Data.Items[0]
-	return &TushareStockBasic{
+	return &SFLStockBasic{
 		TsCode:   getStr(item, idx, "ts_code"),
 		Symbol:   getStr(item, idx, "symbol"),
 		Name:     getStr(item, idx, "name"),
@@ -211,8 +211,8 @@ func (c *TushareClient) FetchStockBasic(tsCode string) (*TushareStockBasic, erro
 
 // ========== 日线行情 ==========
 
-// FetchDaily 获取日线行情，返回 KlineData（Tushare daily 接口）
-func (c *TushareClient) FetchDaily(market, code, startDate, endDate string) ([]KlineData, error) {
+// FetchDaily 获取日线行情，返回 KlineData（数据源 daily 接口）
+func (c *SFLClient) FetchDaily(market, code, startDate, endDate string) ([]KlineData, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -243,7 +243,7 @@ func (c *TushareClient) FetchDaily(market, code, startDate, endDate string) ([]K
 			High:   getFloat(item, idx, "high"),
 			Low:    getFloat(item, idx, "low"),
 			Volume: getFloat(item, idx, "vol"),
-			Amount: getFloat(item, idx, "amount") * 1000, // Tushare daily 接口 amount 单位为千元，转换为元
+			Amount: getFloat(item, idx, "amount") * 1000, // 数据源 daily 接口 amount 单位为千元，转换为元
 		}
 		// 前复权处理
 		if len(adjFactors) > 0 {
@@ -251,7 +251,7 @@ func (c *TushareClient) FetchDaily(market, code, startDate, endDate string) ([]K
 		}
 		result = append(result, k)
 	}
-	// Tushare 返回的数据是按时间倒序排列的（最新在前），需要反转成正序（最新在后）
+	// 数据源返回的数据是按时间倒序排列的（最新在前），需要反转成正序（最新在后）
 	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
 		result[i], result[j] = result[j], result[i]
 	}
@@ -259,7 +259,7 @@ func (c *TushareClient) FetchDaily(market, code, startDate, endDate string) ([]K
 }
 
 // fetchAdjFactors 获取复权因子
-func (c *TushareClient) fetchAdjFactors(tsCode, startDate, endDate string) (map[string]float64, error) {
+func (c *SFLClient) fetchAdjFactors(tsCode, startDate, endDate string) (map[string]float64, error) {
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
 		"start_date": startDate,
@@ -313,7 +313,7 @@ func applyAdjFactor(k KlineData, adjFactors map[string]float64, tradeDate string
 // ========== 每日指标 ==========
 
 // FetchDailyBasic 获取每日指标（PE/PB/市值/换手率/股息率等）
-func (c *TushareClient) FetchDailyBasic(market, code, tradeDate string) (*StockQuote, error) {
+func (c *SFLClient) FetchDailyBasic(market, code, tradeDate string) (*StockQuote, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code": tsCode,
@@ -350,8 +350,8 @@ func (c *TushareClient) FetchDailyBasic(market, code, tradeDate string) (*StockQ
 
 // ========== 财务数据 ==========
 
-// TushareIncomeItem 利润表条目
-type TushareIncomeItem struct {
+// SFLIncomeItem 利润表条目
+type SFLIncomeItem struct {
 	TsCode        string  `json:"ts_code"`
 	EndDate       string  `json:"end_date"`     // 报告期
 	AnnDate       string  `json:"ann_date"`     // 公告日期
@@ -370,7 +370,7 @@ type TushareIncomeItem struct {
 }
 
 // FetchIncome 获取利润表
-func (c *TushareClient) FetchIncome(market, code, startDate, endDate string) ([]TushareIncomeItem, error) {
+func (c *SFLClient) FetchIncome(market, code, startDate, endDate string) ([]SFLIncomeItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -386,9 +386,9 @@ func (c *TushareClient) FetchIncome(market, code, startDate, endDate string) ([]
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareIncomeItem, 0, len(resp.Data.Items))
+	result := make([]SFLIncomeItem, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareIncomeItem{
+		result = append(result, SFLIncomeItem{
 			TsCode:        getStr(item, idx, "ts_code"),
 			EndDate:       getStr(item, idx, "end_date"),
 			AnnDate:       getStr(item, idx, "ann_date"),
@@ -409,8 +409,8 @@ func (c *TushareClient) FetchIncome(market, code, startDate, endDate string) ([]
 	return result, nil
 }
 
-// TushareBalanceItem 资产负债表条目
-type TushareBalanceItem struct {
+// SFLBalanceItem 资产负债表条目
+type SFLBalanceItem struct {
 	TsCode         string  `json:"ts_code"`
 	EndDate        string  `json:"end_date"`
 	TotalAssets    float64 `json:"total_assets"`
@@ -454,7 +454,7 @@ type TushareBalanceItem struct {
 }
 
 // FetchBalanceSheet 获取资产负债表
-func (c *TushareClient) FetchBalanceSheet(market, code, startDate, endDate string) ([]TushareBalanceItem, error) {
+func (c *SFLClient) FetchBalanceSheet(market, code, startDate, endDate string) ([]SFLBalanceItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -476,9 +476,9 @@ func (c *TushareClient) FetchBalanceSheet(market, code, startDate, endDate strin
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareBalanceItem, 0, len(resp.Data.Items))
+	result := make([]SFLBalanceItem, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareBalanceItem{
+		result = append(result, SFLBalanceItem{
 			TsCode:         getStr(item, idx, "ts_code"),
 			EndDate:        getStr(item, idx, "end_date"),
 			TotalAssets:    getFloat(item, idx, "total_assets"),
@@ -524,8 +524,8 @@ func (c *TushareClient) FetchBalanceSheet(market, code, startDate, endDate strin
 	return result, nil
 }
 
-// TushareCashflowItem 现金流量表条目
-type TushareCashflowItem struct {
+// SFLCashflowItem 现金流量表条目
+type SFLCashflowItem struct {
 	TsCode        string  `json:"ts_code"`
 	EndDate       string  `json:"end_date"`
 	NCashflowAct  float64 `json:"n_cashflow_act"`  // 经营活动现金流净额
@@ -542,7 +542,7 @@ type TushareCashflowItem struct {
 }
 
 // FetchCashflow 获取现金流量表
-func (c *TushareClient) FetchCashflow(market, code, startDate, endDate string) ([]TushareCashflowItem, error) {
+func (c *SFLClient) FetchCashflow(market, code, startDate, endDate string) ([]SFLCashflowItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -559,9 +559,9 @@ func (c *TushareClient) FetchCashflow(market, code, startDate, endDate string) (
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareCashflowItem, 0, len(resp.Data.Items))
+	result := make([]SFLCashflowItem, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareCashflowItem{
+		result = append(result, SFLCashflowItem{
 			TsCode:         getStr(item, idx, "ts_code"),
 			EndDate:        getStr(item, idx, "end_date"),
 			NCashflowAct:   getFloat(item, idx, "n_cashflow_act"),
@@ -580,8 +580,8 @@ func (c *TushareClient) FetchCashflow(market, code, startDate, endDate string) (
 	return result, nil
 }
 
-// TushareFinaIndicator 财务指标条目
-type TushareFinaIndicator struct {
+// SFLFinaIndicator 财务指标条目
+type SFLFinaIndicator struct {
 	TsCode            string  `json:"ts_code"`
 	EndDate           string  `json:"end_date"`
 	ROE               float64 `json:"roe"`
@@ -600,7 +600,7 @@ type TushareFinaIndicator struct {
 }
 
 // FetchFinaIndicator 获取财务指标
-func (c *TushareClient) FetchFinaIndicator(market, code, startDate, endDate string) ([]TushareFinaIndicator, error) {
+func (c *SFLClient) FetchFinaIndicator(market, code, startDate, endDate string) ([]SFLFinaIndicator, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -617,9 +617,9 @@ func (c *TushareClient) FetchFinaIndicator(market, code, startDate, endDate stri
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareFinaIndicator, 0, len(resp.Data.Items))
+	result := make([]SFLFinaIndicator, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareFinaIndicator{
+		result = append(result, SFLFinaIndicator{
 			TsCode:            getStr(item, idx, "ts_code"),
 			EndDate:           getStr(item, idx, "end_date"),
 			ROE:               getFloat(item, idx, "roe"),
@@ -642,8 +642,8 @@ func (c *TushareClient) FetchFinaIndicator(market, code, startDate, endDate stri
 
 // ========== 资金流向 ==========
 
-// TushareMoneyflowItem 个股资金流向条目
-type TushareMoneyflowItem struct {
+// SFLMoneyflowItem 个股资金流向条目
+type SFLMoneyflowItem struct {
 	TsCode        string  `json:"ts_code"`
 	TradeDate     string  `json:"trade_date"`
 	BuySmAmount   float64 `json:"buy_sm_amount"`   // 小单买入金额
@@ -658,7 +658,7 @@ type TushareMoneyflowItem struct {
 }
 
 // FetchMoneyflow 获取个股资金流向
-func (c *TushareClient) FetchMoneyflow(market, code, startDate, endDate string) ([]TushareMoneyflowItem, error) {
+func (c *SFLClient) FetchMoneyflow(market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -675,9 +675,9 @@ func (c *TushareClient) FetchMoneyflow(market, code, startDate, endDate string) 
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareMoneyflowItem, 0, len(resp.Data.Items))
+	result := make([]SFLMoneyflowItem, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareMoneyflowItem{
+		result = append(result, SFLMoneyflowItem{
 			TsCode:        getStr(item, idx, "ts_code"),
 			TradeDate:     getStr(item, idx, "trade_date"),
 			BuySmAmount:   getFloat(item, idx, "buy_sm_amount"),
@@ -696,24 +696,24 @@ func (c *TushareClient) FetchMoneyflow(market, code, startDate, endDate string) 
 
 // ========== 概念板块 ==========
 
-// TushareConcept 概念板块
-type TushareConcept struct {
+// SFLConcept 概念板块
+type SFLConcept struct {
 	Code string `json:"code"`
 	Name string `json:"name"`
 	Src  string `json:"src"`
 }
 
 // FetchConceptList 获取概念板块列表
-func (c *TushareClient) FetchConceptList() ([]TushareConcept, error) {
+func (c *SFLClient) FetchConceptList() ([]SFLConcept, error) {
 	resp, err := c.query("concept", map[string]interface{}{}, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareConcept, 0, len(resp.Data.Items))
+	result := make([]SFLConcept, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareConcept{
+		result = append(result, SFLConcept{
 			Code: getStr(item, idx, "code"),
 			Name: getStr(item, idx, "name"),
 			Src:  getStr(item, idx, "src"),
@@ -722,8 +722,8 @@ func (c *TushareClient) FetchConceptList() ([]TushareConcept, error) {
 	return result, nil
 }
 
-// TushareConceptStock 概念成分股
-type TushareConceptStock struct {
+// SFLConceptStock 概念成分股
+type SFLConceptStock struct {
 	ID          string `json:"id"`
 	ConceptName string `json:"concept_name"`
 	TsCode      string `json:"ts_code"`
@@ -733,7 +733,7 @@ type TushareConceptStock struct {
 }
 
 // FetchConceptDetail 获取概念成分股
-func (c *TushareClient) FetchConceptDetail(conceptID string) ([]TushareConceptStock, error) {
+func (c *SFLClient) FetchConceptDetail(conceptID string) ([]SFLConceptStock, error) {
 	params := map[string]interface{}{"id": conceptID}
 	resp, err := c.query("concept_detail", params, nil)
 	if err != nil {
@@ -741,9 +741,9 @@ func (c *TushareClient) FetchConceptDetail(conceptID string) ([]TushareConceptSt
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareConceptStock, 0, len(resp.Data.Items))
+	result := make([]SFLConceptStock, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareConceptStock{
+		result = append(result, SFLConceptStock{
 			ID:          getStr(item, idx, "id"),
 			ConceptName: getStr(item, idx, "concept_name"),
 			TsCode:      getStr(item, idx, "ts_code"),
@@ -755,8 +755,8 @@ func (c *TushareClient) FetchConceptDetail(conceptID string) ([]TushareConceptSt
 	return result, nil
 }
 
-// TushareThsHotItem 同花顺热股/热概念数据
-type TushareThsHotItem struct {
+// SFLThsHotItem 同花顺热股/热概念数据
+type SFLThsHotItem struct {
 	TradeDate string  `json:"trade_date"`
 	DataType  string  `json:"data_type"`   // 概念板块/个股/行业/期货/美股/港股
 	TsCode    string  `json:"ts_code"`
@@ -771,7 +771,7 @@ type TushareThsHotItem struct {
 }
 
 // FetchThsHot 获取同花顺热搜数据（概念板块、个股、行业等）
-func (c *TushareClient) FetchThsHot(tradeDate string) ([]TushareThsHotItem, error) {
+func (c *SFLClient) FetchThsHot(tradeDate string) ([]SFLThsHotItem, error) {
 	params := map[string]interface{}{}
 	if tradeDate != "" {
 		params["trade_date"] = tradeDate
@@ -782,9 +782,9 @@ func (c *TushareClient) FetchThsHot(tradeDate string) ([]TushareThsHotItem, erro
 	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
-	result := make([]TushareThsHotItem, 0, len(resp.Data.Items))
+	result := make([]SFLThsHotItem, 0, len(resp.Data.Items))
 	for _, item := range resp.Data.Items {
-		result = append(result, TushareThsHotItem{
+		result = append(result, SFLThsHotItem{
 			TradeDate: getStr(item, idx, "trade_date"),
 			DataType:  getStr(item, idx, "data_type"),
 			TsCode:    getStr(item, idx, "ts_code"),
@@ -802,7 +802,7 @@ func (c *TushareClient) FetchThsHot(tradeDate string) ([]TushareThsHotItem, erro
 }
 
 // VerifyToken 验证 Token 是否有效
-func (c *TushareClient) VerifyToken() error {
+func (c *SFLClient) VerifyToken() error {
 	_, err := c.query("stock_basic", map[string]interface{}{"limit": 1}, []string{"ts_code"})
 	return err
 }

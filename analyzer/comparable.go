@@ -191,13 +191,16 @@ func loadComparableFinancialData(baseDir, symbol string) (*FinancialData, error)
 		years = extractYearsFloat(cf)
 	}
 
-	return &FinancialData{
+	fd := &FinancialData{
 		Symbol:          symbol,
 		Years:           years,
 		BalanceSheet:    bs,
 		IncomeStatement: is,
 		CashFlow:        cf,
-	}, nil
+	}
+	fd.fixMissingData()
+	fd.validate()
+	return fd, nil
 }
 
 func calcAverage(metrics map[string]*ComparableMetrics) *ComparableMetrics {

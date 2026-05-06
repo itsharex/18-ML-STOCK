@@ -182,7 +182,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 }
 
 // FetchCashFlowDividendFromEastMoney 从东方财富现金流量表获取分红支出数据
-// 用于补充其他数据源（如Tushare）缺失的分红字段
+// 用于补充其他数据源（如StockFinLens）缺失的分红字段
 func FetchCashFlowDividendFromEastMoney(market, code string, maxYears int) (map[string]float64, error) {
 	if maxYears <= 0 {
 		maxYears = 5

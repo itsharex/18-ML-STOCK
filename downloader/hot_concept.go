@@ -67,12 +67,12 @@ const (
 	hotConceptCacheVer    = 3          // 缓存版本号，字段映射/去重逻辑变更时递增使旧缓存失效
 )
 
-// tushareHotConceptClient 用于热点概念降级的数据源客户端（由 app.go 设置）
-var tushareHotConceptClient *TushareClient
+// sflHotConceptClient 用于热点概念降级的数据源客户端（由 app.go 设置）
+var sflHotConceptClient *SFLClient
 
-// SetTushareHotConceptClient 设置数据源客户端，供热点概念降级使用
-func SetTushareHotConceptClient(client *TushareClient) {
-	tushareHotConceptClient = client
+// SetSFLHotConceptClient 设置数据源客户端，供热点概念降级使用
+func SetSFLHotConceptClient(client *SFLClient) {
+	sflHotConceptClient = client
 }
 
 // ========== 核心入口 ==========
@@ -90,10 +90,10 @@ func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
 	dataSource := "eastmoney"
 
 	// 3. 东财失败，尝试 StockFinLens 同花顺热搜降级
-	if err != nil && tushareHotConceptClient != nil {
+	if err != nil && sflHotConceptClient != nil {
 		fmt.Printf("[HotConcept] EastMoney failed (%v), trying StockFinLens ths_hot...\n", err)
-		if tushareConcepts, tErr := fetchHotConceptsFromTushare(tushareHotConceptClient); tErr == nil && len(tushareConcepts) > 0 {
-			concepts = tushareConcepts
+		if sflConcepts, tErr := fetchHotConceptsFromSFL(sflHotConceptClient); tErr == nil && len(sflConcepts) > 0 {
+			concepts = sflConcepts
 			dataSource = "stockfinlens"
 			err = nil
 		} else {
@@ -136,8 +136,8 @@ func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
 	return board, nil
 }
 
-// fetchHotConceptsFromTushare 通过数据源同花顺热搜获取热点概念
-func fetchHotConceptsFromTushare(client *TushareClient) ([]HotConcept, error) {
+// fetchHotConceptsFromSFL 通过 SFL 同花顺热搜获取热点概念
+func fetchHotConceptsFromSFL(client *SFLClient) ([]HotConcept, error) {
 	items, err := client.FetchThsHot("")
 	if err != nil {
 		return nil, fmt.Errorf("ths_hot 请求失败: %w", err)

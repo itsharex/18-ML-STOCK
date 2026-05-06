@@ -66,6 +66,8 @@ export function GetRiskRadar(arg1:string,arg2:string):Promise<Array<analyzer.Ris
 
 export function GetRiskSensitivity():Promise<string>;
 
+export function GetSFLConfig():Promise<main.SFLConfig>;
+
 export function GetStockConcepts(arg1:string):Promise<downloader.StockConcepts>;
 
 export function GetStockDataHistory(arg1:string):Promise<Array<main.HistoryMeta>>;
@@ -77,8 +79,6 @@ export function GetStockMoneyflow(arg1:string,arg2:number):Promise<main.StockMon
 export function GetStockProfile(arg1:string):Promise<main.StockProfile>;
 
 export function GetStockQuote(arg1:string):Promise<downloader.StockQuote>;
-
-export function GetTushareConfig():Promise<main.TushareConfig>;
 
 export function GetWatchlist():Promise<Array<main.WatchlistItem>>;
 
@@ -116,7 +116,7 @@ export function ReorderWatchlist(arg1:Array<string>):Promise<void>;
 
 export function SaveDefaultPolicyLibrary():Promise<void>;
 
-export function SaveTushareConfig(arg1:main.TushareConfig):Promise<void>;
+export function SaveSFLConfig(arg1:main.SFLConfig):Promise<void>;
 
 export function SearchStocks(arg1:string):Promise<Array<main.StockInfo>>;
 
@@ -130,4 +130,4 @@ export function UpdateModule4Only(arg1:string):Promise<analyzer.AnalysisReport>;
 
 export function UpdatePolicyLibrary():Promise<downloader.PolicyUpdateResult>;
 
-export function VerifyTushareToken(arg1:string):Promise<main.TushareVerifyResult>;
+export function VerifySFLToken(arg1:string):Promise<main.SFLVerifyResult>;

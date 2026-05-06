@@ -126,6 +126,10 @@ export function GetRiskSensitivity() {
   return window['go']['main']['App']['GetRiskSensitivity']();
 }
 
+export function GetSFLConfig() {
+  return window['go']['main']['App']['GetSFLConfig']();
+}
+
 export function GetStockConcepts(arg1) {
   return window['go']['main']['App']['GetStockConcepts'](arg1);
 }
@@ -148,10 +152,6 @@ export function GetStockProfile(arg1) {
 
 export function GetStockQuote(arg1) {
   return window['go']['main']['App']['GetStockQuote'](arg1);
-}
-
-export function GetTushareConfig() {
-  return window['go']['main']['App']['GetTushareConfig']();
 }
 
 export function GetWatchlist() {
@@ -226,8 +226,8 @@ export function SaveDefaultPolicyLibrary() {
   return window['go']['main']['App']['SaveDefaultPolicyLibrary']();
 }
 
-export function SaveTushareConfig(arg1) {
-  return window['go']['main']['App']['SaveTushareConfig'](arg1);
+export function SaveSFLConfig(arg1) {
+  return window['go']['main']['App']['SaveSFLConfig'](arg1);
 }
 
 export function SearchStocks(arg1) {
@@ -254,6 +254,6 @@ export function UpdatePolicyLibrary() {
   return window['go']['main']['App']['UpdatePolicyLibrary']();
 }
 
-export function VerifyTushareToken(arg1) {
-  return window['go']['main']['App']['VerifyTushareToken'](arg1);
+export function VerifySFLToken(arg1) {
+  return window['go']['main']['App']['VerifySFLToken'](arg1);
 }

@@ -3432,22 +3432,22 @@ func decodeToken(token string) string {
 	return string(decoded)
 }
 
-// ========== StockFinLens 数据源配置 Wails 绑定 ==========
+// ========== StockFinLens SFL 配置 Wails 绑定 ==========
 
-// GetTushareConfig 获取数据源配置
-func (a *App) GetTushareConfig() (*TushareConfig, error) {
+// GetSFLConfig 获取 SFL 配置
+func (a *App) GetSFLConfig() (*SFLConfig, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("存储未初始化")
 	}
-	return a.storage.LoadTushareConfig()
+	return a.storage.LoadSFLConfig()
 }
 
-// SaveTushareConfig 保存数据源配置
-func (a *App) SaveTushareConfig(cfg TushareConfig) error {
+// SaveSFLConfig 保存 SFL 配置
+func (a *App) SaveSFLConfig(cfg SFLConfig) error {
 	if a.storage == nil {
 		return fmt.Errorf("存储未初始化")
 	}
-	if err := a.storage.SaveTushareConfig(&cfg); err != nil {
+	if err := a.storage.SaveSFLConfig(&cfg); err != nil {
 		return err
 	}
 	// 配置变更后重新加载数据源路由
@@ -3460,9 +3460,9 @@ func (a *App) reloadDataRouter() {
 	if a.storage == nil {
 		return
 	}
-	cfg, err := a.storage.LoadTushareConfig()
+	cfg, err := a.storage.LoadSFLConfig()
 	if err != nil {
-		fmt.Printf("[DataRouter] 加载数据源配置失败: %v\n", err)
+		fmt.Printf("[DataRouter] 加载SFL 配置失败: %v\n", err)
 		a.dataRouter = downloader.NewDataRouter("", false, false, false, false, false)
 		return
 	}
@@ -3474,29 +3474,29 @@ func (a *App) reloadDataRouter() {
 
 	// 设置热点概念降级用的数据源客户端
 	if cfg.Enabled && realToken != "" {
-		downloader.SetTushareHotConceptClient(downloader.NewTushareClient(realToken))
+		downloader.SetSFLHotConceptClient(downloader.NewSFLClient(realToken))
 	} else {
-		downloader.SetTushareHotConceptClient(nil)
+		downloader.SetSFLHotConceptClient(nil)
 	}
 }
 
-// TushareVerifyResult 授权码验证结果
-type TushareVerifyResult struct {
+// SFLVerifyResult 授权码验证结果
+type SFLVerifyResult struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
 
-// VerifyTushareToken 验证授权码是否有效
-func (a *App) VerifyTushareToken(token string) (*TushareVerifyResult, error) {
+// VerifySFLToken 验证授权码是否有效
+func (a *App) VerifySFLToken(token string) (*SFLVerifyResult, error) {
 	if token == "" {
-		return &TushareVerifyResult{Success: false, Message: "授权码不能为空"}, nil
+		return &SFLVerifyResult{Success: false, Message: "授权码不能为空"}, nil
 	}
 	realToken := decodeToken(token)
-	client := downloader.NewTushareClient(realToken)
+	client := downloader.NewSFLClient(realToken)
 	if err := client.VerifyToken(); err != nil {
-		return &TushareVerifyResult{Success: false, Message: fmt.Sprintf("验证失败: %v", err)}, nil
+		return &SFLVerifyResult{Success: false, Message: fmt.Sprintf("验证失败: %v", err)}, nil
 	}
-	return &TushareVerifyResult{Success: true, Message: "验证通过，授权码有效"}, nil
+	return &SFLVerifyResult{Success: true, Message: "验证通过，授权码有效"}, nil
 }
 
 // ========== 个股资金流向 ==========

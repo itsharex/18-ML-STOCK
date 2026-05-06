@@ -2,13 +2,14 @@ package downloader
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
 // DataRouter 数据源路由器，根据配置自动选择最优数据源
 type DataRouter struct {
-	tushareClient *TushareClient
-	tushareEnabled bool
+	sflClient *SFLClient
+	sflEnabled bool
 	useForFinancial bool
 	useForKline     bool
 	useForQuote     bool
@@ -18,14 +19,14 @@ type DataRouter struct {
 // NewDataRouter 创建数据源路由器
 func NewDataRouter(token string, enabled, useFin, useKline, useQuote, useMF bool) *DataRouter {
 	r := &DataRouter{
-		tushareEnabled:  enabled && token != "",
+		sflEnabled:  enabled && token != "",
 		useForFinancial: useFin,
 		useForKline:     useKline,
 		useForQuote:     useQuote,
 		useForMoneyflow: useMF,
 	}
-	if r.tushareEnabled {
-		r.tushareClient = NewTushareClient(token)
+	if r.sflEnabled {
+		r.sflClient = NewSFLClient(token)
 	}
 	return r
 }
@@ -35,10 +36,10 @@ func NewDataRouter(token string, enabled, useFin, useKline, useQuote, useMF bool
 // FetchKlines 获取历史K线，按优先级路由
 func (r *DataRouter) FetchKlines(market, code string, limit int) ([]KlineData, error) {
 	// 1. StockFinLens 数据源（如果启用）
-	if r.tushareEnabled && r.useForKline && r.tushareClient != nil {
+	if r.sflEnabled && r.useForKline && r.sflClient != nil {
 		end := time.Now().Format("20060102")
 		start := time.Now().AddDate(-2, 0, 0).Format("20060102")
-		if klines, err := r.tushareClient.FetchDaily(market, code, start, end); err == nil && len(klines) > 0 {
+		if klines, err := r.sflClient.FetchDaily(market, code, start, end); err == nil && len(klines) > 0 {
 			fmt.Printf("[DataRouter] Klines from StockFinLens: %d bars for %s.%s\n", len(klines), market, code)
 			if len(klines) > limit {
 				return klines[len(klines)-limit:], nil
@@ -92,8 +93,8 @@ func (r *DataRouter) FetchQuote(market, code string) (*StockQuote, error) {
 // FetchDailyMetrics 获取每日指标（PE/PB/市值/换手率），按优先级路由
 func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQuote, error) {
 	// 1. StockFinLens daily_basic（如果启用）
-	if r.tushareEnabled && r.useForQuote && r.tushareClient != nil {
-		if quote, err := r.tushareClient.FetchDailyBasic(market, code, tradeDate); err == nil && quote != nil && quote.CurrentPrice > 0 {
+	if r.sflEnabled && r.useForQuote && r.sflClient != nil {
+		if quote, err := r.sflClient.FetchDailyBasic(market, code, tradeDate); err == nil && quote != nil && quote.CurrentPrice > 0 {
 			fmt.Printf("[DataRouter] Metrics from StockFinLens for %s.%s\n", market, code)
 			return quote, nil
 		}
@@ -112,38 +113,38 @@ func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQu
 
 // ========== 财报数据路由 ==========
 
-// TushareFinancialData 封装数据源财务数据
-type TushareFinancialData struct {
-	Income       []TushareIncomeItem
-	BalanceSheet []TushareBalanceItem
-	Cashflow     []TushareCashflowItem
-	Indicators   []TushareFinaIndicator
+// SFLFinancialData 封装 SFL 财务数据
+type SFLFinancialData struct {
+	Income       []SFLIncomeItem
+	BalanceSheet []SFLBalanceItem
+	Cashflow     []SFLCashflowItem
+	Indicators   []SFLFinaIndicator
 }
 
 // FetchFinancialData 获取财务数据，按优先级路由
-func (r *DataRouter) FetchFinancialData(market, code string) (*TushareFinancialData, error) {
+func (r *DataRouter) FetchFinancialData(market, code string) (*SFLFinancialData, error) {
 	// 1. StockFinLens 数据源（如果启用）
-	if r.tushareEnabled && r.useForFinancial && r.tushareClient != nil {
+	if r.sflEnabled && r.useForFinancial && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Financial from StockFinLens for %s.%s\n", market, code)
 		start := time.Now().AddDate(-5, 0, 0).Format("20060102")
 		end := time.Now().Format("20060102")
 
-		var data TushareFinancialData
+		var data SFLFinancialData
 		var hasData bool
 
-		if income, err := r.tushareClient.FetchIncome(market, code, start, end); err == nil && len(income) > 0 {
+		if income, err := r.sflClient.FetchIncome(market, code, start, end); err == nil && len(income) > 0 {
 			data.Income = income
 			hasData = true
 		}
-		if bs, err := r.tushareClient.FetchBalanceSheet(market, code, start, end); err == nil && len(bs) > 0 {
+		if bs, err := r.sflClient.FetchBalanceSheet(market, code, start, end); err == nil && len(bs) > 0 {
 			data.BalanceSheet = bs
 			hasData = true
 		}
-		if cf, err := r.tushareClient.FetchCashflow(market, code, start, end); err == nil && len(cf) > 0 {
+		if cf, err := r.sflClient.FetchCashflow(market, code, start, end); err == nil && len(cf) > 0 {
 			data.Cashflow = cf
 			hasData = true
 		}
-		if ind, err := r.tushareClient.FetchFinaIndicator(market, code, start, end); err == nil && len(ind) > 0 {
+		if ind, err := r.sflClient.FetchFinaIndicator(market, code, start, end); err == nil && len(ind) > 0 {
 			data.Indicators = ind
 			hasData = true
 		}
@@ -158,7 +159,7 @@ func (r *DataRouter) FetchFinancialData(market, code string) (*TushareFinancialD
 	return nil, fmt.Errorf("数据源未启用或未获取到数据，请使用 EastMoney 下载")
 }
 
-// toYearKey 将 Tushare 日期格式 20241231 转换为 2024-12-31
+// toYearKey 将 SFL 日期格式 20241231 转换为 2024-12-31
 func toYearKey(endDate string) string {
 	if len(endDate) == 8 {
 		return endDate[:4] + "-" + endDate[4:6] + "-" + endDate[6:]
@@ -166,8 +167,15 @@ func toYearKey(endDate string) string {
 	return endDate
 }
 
-// ConvertToFinancialReportData 将 Tushare 财务数据转换为标准 FinancialReportData
-func (r *DataRouter) ConvertToFinancialReportData(tfd *TushareFinancialData, symbol string) *FinancialReportData {
+// isAnnualReport 判断报告期是否为年报（12-31 结尾）
+// 分析引擎仅使用年报数据进行同比分析，季报会被过滤掉
+func isAnnualReport(endDate string) bool {
+	year := toYearKey(endDate)
+	return strings.HasSuffix(year, "-12-31") || len(year) == 4
+}
+
+// ConvertToFinancialReportData 将 SFL 财务数据转换为标准 FinancialReportData
+func (r *DataRouter) ConvertToFinancialReportData(tfd *SFLFinancialData, symbol string) *FinancialReportData {
 	result := &FinancialReportData{
 		Symbol:          symbol,
 		Years:           make([]string, 0),
@@ -178,8 +186,11 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *TushareFinancialData, sym
 
 	yearSet := make(map[string]struct{})
 
-	// 收入表
+	// 收入表（只保留年报）
 	for _, item := range tfd.Income {
+		if !isAnnualReport(item.EndDate) {
+			continue
+		}
 		year := toYearKey(item.EndDate)
 		yearSet[year] = struct{}{}
 		setVal(result.IncomeStatement, "营业收入", year, item.Revenue)
@@ -196,8 +207,11 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *TushareFinancialData, sym
 		setVal(result.IncomeStatement, "基本每股收益", year, item.EPS)
 	}
 
-	// 资产负债表
+	// 资产负债表（只保留年报）
 	for _, item := range tfd.BalanceSheet {
+		if !isAnnualReport(item.EndDate) {
+			continue
+		}
 		year := toYearKey(item.EndDate)
 		yearSet[year] = struct{}{}
 		setVal(result.BalanceSheet, "资产合计", year, item.TotalAssets)
@@ -246,8 +260,11 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *TushareFinancialData, sym
 		setVal(result.BalanceSheet, "归属于母公司所有者权益合计", year, item.TotalHldrEqy-item.MinorityInt)
 	}
 
-	// 现金流量表
+	// 现金流量表（只保留年报）
 	for _, item := range tfd.Cashflow {
+		if !isAnnualReport(item.EndDate) {
+			continue
+		}
 		year := toYearKey(item.EndDate)
 		yearSet[year] = struct{}{}
 		setVal(result.CashFlow, "经营活动产生的现金流量净额", year, item.NCashflowAct)
@@ -288,10 +305,10 @@ func setVal(target map[string]map[string]float64, account, year string, val floa
 // ========== 个股资金流向路由 ==========
 
 // FetchMoneyflow 获取个股资金流向，按优先级路由
-func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]TushareMoneyflowItem, error) {
+func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
 	// 1. StockFinLens 数据源（如果启用）
-	if r.tushareEnabled && r.useForMoneyflow && r.tushareClient != nil {
-		if mf, err := r.tushareClient.FetchMoneyflow(market, code, startDate, endDate); err == nil && len(mf) > 0 {
+	if r.sflEnabled && r.useForMoneyflow && r.sflClient != nil {
+		if mf, err := r.sflClient.FetchMoneyflow(market, code, startDate, endDate); err == nil && len(mf) > 0 {
 			fmt.Printf("[DataRouter] Moneyflow from StockFinLens: %d records for %s.%s\n", len(mf), market, code)
 			return mf, nil
 		}
@@ -304,11 +321,11 @@ func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]
 // ========== 股票基础信息路由 ==========
 
 // FetchStockBasic 获取股票基础信息
-func (r *DataRouter) FetchStockBasic(market, code string) (*TushareStockBasic, error) {
+func (r *DataRouter) FetchStockBasic(market, code string) (*SFLStockBasic, error) {
 	// 1. StockFinLens 数据源（如果启用）
-	if r.tushareEnabled && r.tushareClient != nil {
+	if r.sflEnabled && r.sflClient != nil {
 		tsCode := toTsCode(market, code)
-		if basic, err := r.tushareClient.FetchStockBasic(tsCode); err == nil && basic != nil {
+		if basic, err := r.sflClient.FetchStockBasic(tsCode); err == nil && basic != nil {
 			fmt.Printf("[DataRouter] StockBasic from StockFinLens for %s.%s\n", market, code)
 			return basic, nil
 		}
@@ -321,17 +338,17 @@ func (r *DataRouter) FetchStockBasic(market, code string) (*TushareStockBasic, e
 // ========== 概念板块路由 ==========
 
 // FetchConceptList 获取概念板块列表
-func (r *DataRouter) FetchConceptList() ([]TushareConcept, error) {
-	if r.tushareEnabled && r.tushareClient != nil {
-		return r.tushareClient.FetchConceptList()
+func (r *DataRouter) FetchConceptList() ([]SFLConcept, error) {
+	if r.sflEnabled && r.sflClient != nil {
+		return r.sflClient.FetchConceptList()
 	}
 	return nil, fmt.Errorf("数据源未启用")
 }
 
 // FetchConceptDetail 获取概念成分股
-func (r *DataRouter) FetchConceptDetail(conceptID string) ([]TushareConceptStock, error) {
-	if r.tushareEnabled && r.tushareClient != nil {
-		return r.tushareClient.FetchConceptDetail(conceptID)
+func (r *DataRouter) FetchConceptDetail(conceptID string) ([]SFLConceptStock, error) {
+	if r.sflEnabled && r.sflClient != nil {
+		return r.sflClient.FetchConceptDetail(conceptID)
 	}
 	return nil, fmt.Errorf("数据源未启用")
 }
@@ -345,10 +362,10 @@ func (r *DataRouter) FetchProfile(market, code string) (*StockProfile, error) {
 	}
 
 	// 2. StockFinLens stock_basic（补充基础信息）
-	if r.tushareEnabled && r.tushareClient != nil {
+	if r.sflEnabled && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Profile fallback to StockFinLens for %s.%s\n", market, code)
 		tsCode := toTsCode(market, code)
-		if basic, err := r.tushareClient.FetchStockBasic(tsCode); err == nil && basic != nil {
+		if basic, err := r.sflClient.FetchStockBasic(tsCode); err == nil && basic != nil {
 			profile := &StockProfile{
 				Industry:    basic.Industry,
 				ListingDate: basic.ListDate,
@@ -369,7 +386,7 @@ func (r *DataRouter) FetchConcepts(market, code string, changePercent float64) (
 	}
 
 	// 2. StockFinLens concept_detail（补充基础概念列表）
-	if r.tushareEnabled && r.tushareClient != nil {
+	if r.sflEnabled && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Concepts fallback to StockFinLens for %s.%s\n", market, code)
 		// 数据源概念数据需通过 concept 列表反向查找，暂不实现
 		// 东财失败后直接返回错误，由调用方处理
@@ -380,18 +397,18 @@ func (r *DataRouter) FetchConcepts(market, code string, changePercent float64) (
 
 // IsUseForQuote 返回是否启用数据源每日指标
 func (r *DataRouter) IsUseForQuote() bool {
-	return r.tushareEnabled && r.useForQuote && r.tushareClient != nil
+	return r.sflEnabled && r.useForQuote && r.sflClient != nil
 }
 
 // IsUseForMoneyflow 返回是否启用数据源个股资金流向
 func (r *DataRouter) IsUseForMoneyflow() bool {
-	return r.tushareEnabled && r.useForMoneyflow && r.tushareClient != nil
+	return r.sflEnabled && r.useForMoneyflow && r.sflClient != nil
 }
 
-// VerifyTushare 验证数据源授权码
-func (r *DataRouter) VerifyTushare() error {
-	if r.tushareClient == nil {
+// VerifySFL 验证 SFL 授权码
+func (r *DataRouter) VerifySFL() error {
+	if r.sflClient == nil {
 		return fmt.Errorf("数据源客户端未初始化")
 	}
-	return r.tushareClient.VerifyToken()
+	return r.sflClient.VerifyToken()
 }

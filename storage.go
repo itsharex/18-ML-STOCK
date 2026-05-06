@@ -939,10 +939,10 @@ func (s *Storage) CleanOldHotConceptHistory(maxDays int) error {
 	return nil
 }
 
-// ========== 数据源配置存储 ==========
+// ========== SFL 配置存储 ==========
 
-// TushareConfig 数据源配置
-type TushareConfig struct {
+// SFLConfig SFL 配置
+type SFLConfig struct {
 	Enabled        bool   `json:"enabled"`
 	Token          string `json:"token"`
 	Verified       bool   `json:"verified"`
@@ -953,18 +953,18 @@ type TushareConfig struct {
 	UseForMoneyflow bool  `json:"use_for_moneyflow"`
 }
 
-// TushareConfigPath 返回数据源配置文件路径
-func (s *Storage) TushareConfigPath() string {
+// SFLConfigPath 返回 SFL 配置文件路径
+func (s *Storage) SFLConfigPath() string {
 	return filepath.Join(s.dataDir, "tushare_config.json")
 }
 
-// LoadTushareConfig 加载数据源配置
-func (s *Storage) LoadTushareConfig() (*TushareConfig, error) {
-	path := s.TushareConfigPath()
+// LoadSFLConfig 加载SFL 配置
+func (s *Storage) LoadSFLConfig() (*SFLConfig, error) {
+	path := s.SFLConfigPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &TushareConfig{
+			return &SFLConfig{
 				Enabled:         false,
 				UseForFinancial: true,
 				UseForKline:     true,
@@ -974,19 +974,19 @@ func (s *Storage) LoadTushareConfig() (*TushareConfig, error) {
 		}
 		return nil, err
 	}
-	var cfg TushareConfig
+	var cfg SFLConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("解析数据源配置失败: %w", err)
+		return nil, fmt.Errorf("解析SFL 配置失败: %w", err)
 	}
 	return &cfg, nil
 }
 
-// SaveTushareConfig 保存数据源配置
-func (s *Storage) SaveTushareConfig(cfg *TushareConfig) error {
-	path := s.TushareConfigPath()
+// SaveSFLConfig 保存 SFL 配置
+func (s *Storage) SaveSFLConfig(cfg *SFLConfig) error {
+	path := s.SFLConfigPath()
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("序列化数据源配置失败: %w", err)
+		return fmt.Errorf("序列化SFL 配置失败: %w", err)
 	}
 	return os.WriteFile(path, data, 0644)
 }
