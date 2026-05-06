@@ -162,6 +162,7 @@ import {
   LoadAnalysisSnapshot,
   SendNotification,
   HasPythonDepsChecked,
+  GetSFLConfig,
 } from '../wailsjs/go/main/App'
 import type { main, analyzer, downloader } from '../wailsjs/go/models'
 
@@ -262,6 +263,16 @@ function App() {
 
   const [concepts, setConcepts] = useState<downloader.StockConcepts | null>(null)
   const [moneyflow, setMoneyflow] = useState<main.StockMoneyflowResult | null>(null)
+  const [sflConfig, setSflConfig] = useState<main.SFLConfig | null>(null)
+
+  // 加载 SFL 配置
+  useEffect(() => {
+    GetSFLConfig().then((cfg) => {
+      setSflConfig(cfg)
+    }).catch(() => {
+      setSflConfig(null)
+    })
+  }, [])
 
   // 市场热点/风口
   const [hotConcepts, setHotConcepts] = useState<downloader.HotConcept[]>([])
@@ -816,12 +827,13 @@ function App() {
 
   const loadMoneyflow = useCallback(async (code: string) => {
     try {
-      const mf = await GetStockMoneyflow(code, 5)
+      const days = sflConfig?.moneyflow_days || 3
+      const mf = await GetStockMoneyflow(code, days)
       setMoneyflow(mf || null)
     } catch {
       setMoneyflow(null)
     }
-  }, [])
+  }, [sflConfig])
 
   // 加载政策库元信息（从 localStorage 或默认值）
   const loadPolicyLibMeta = useCallback(() => {
@@ -2108,7 +2120,7 @@ function App() {
                   loadDataHistory(s.code)
                   loadProfile(s.code).then((p) => loadRiskRadar(s.code, p?.industry || ''))
                   loadConcepts(s.code)
-                  loadMoneyflow(s.code + '.' + (s.market || 'SZ'))
+                  loadMoneyflow(s.code)
                   loadComparables(s.code)
                   loadQuote(s.code)
                   // loadKlines(s.code)
@@ -2393,15 +2405,15 @@ function App() {
                 </div>
               </div>
               {/* 近3日资金流向 */}
-              {moneyflow?.has_data && moneyflow.items && moneyflow.items.length > 0 && (
+              {moneyflow?.has_data && moneyflow.items && moneyflow.items.length > 0 ? (
                 <div style={{ padding: '8px 0px', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>近3日资金流向（亿元）</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>近{moneyflow.days || sflConfig?.moneyflow_days || 3}个交易日资金流向（亿元）</div>
                   {/* 表头 */}
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: '30px 50px 50px 48px 48px',
+                    gridTemplateColumns: '32px 52px 52px 50px 50px',
                     gap: 1,
-                    fontSize: 10,
+                    fontSize: 11,
                     color: '#94a3b8',
                     paddingBottom: 3,
                     borderBottom: '1px solid rgba(148,163,184,0.08)',
@@ -2415,12 +2427,12 @@ function App() {
                   </div>
                   {/* 数据行 */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    {moneyflow.items.slice(0, 3).map((item, idx) => (
+                    {moneyflow.items.slice(0, moneyflow.days || sflConfig?.moneyflow_days || 3).map((item, idx) => (
                       <div key={idx} style={{
                         display: 'grid',
-                        gridTemplateColumns: '30px 50px 50px 48px 48px',
+                        gridTemplateColumns: '32px 52px 52px 50px 50px',
                         gap: 1,
-                        fontSize: 10,
+                        fontSize: 11,
                         alignItems: 'center',
                       }}>
                         <span style={{ color: '#64748b', fontFamily: 'monospace', textAlign: 'left', whiteSpace: 'nowrap' }}>
@@ -2458,12 +2470,20 @@ function App() {
                     ))}
                   </div>
                   {moneyflow.summary && (
-                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 5, paddingTop: 4, borderTop: '1px solid rgba(148,163,184,0.06)' }}>
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 5, paddingTop: 4, borderTop: '1px solid rgba(148,163,184,0.06)' }}>
                       {moneyflow.summary}
                     </div>
                   )}
+                  <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 3, lineHeight: 1.4 }}>
+                    主力 = 超大单（&gt;100万）+ 大单（20~100万），按单笔成交金额分档统计，机构可通过拆单规避
+                  </div>
                 </div>
-              )}
+              ) : moneyflow && !moneyflow.has_data && moneyflow.summary ? (
+                <div style={{ padding: '8px 0px', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>近{sflConfig?.moneyflow_days || 3}个交易日资金流向（亿元）</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8' }}>{moneyflow.summary}</div>
+                </div>
+              ) : null}
               <div className="stock-info-footer">
                 <span className="stock-info-time">
                   {profile?.updatedAt

@@ -671,8 +671,11 @@ func (c *SFLClient) FetchMoneyflow(market, code, startDate, endDate string) ([]S
 
 	resp, err := c.query("moneyflow", params, fields)
 	if err != nil {
+		fmt.Printf("[SFL.FetchMoneyflow] %s query error: %v\n", tsCode, err)
 		return nil, err
 	}
+
+	fmt.Printf("[SFL.FetchMoneyflow] %s resp items=%d fields=%v\n", tsCode, len(resp.Data.Items), resp.Data.Fields)
 
 	idx := buildFieldIndex(resp.Data.Fields)
 	result := make([]SFLMoneyflowItem, 0, len(resp.Data.Items))

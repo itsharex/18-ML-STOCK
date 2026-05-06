@@ -1115,6 +1115,7 @@ export namespace main {
 	    use_for_kline: boolean;
 	    use_for_quote: boolean;
 	    use_for_moneyflow: boolean;
+	    moneyflow_days: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SFLConfig(source);
@@ -1130,6 +1131,7 @@ export namespace main {
 	        this.use_for_kline = source["use_for_kline"];
 	        this.use_for_quote = source["use_for_quote"];
 	        this.use_for_moneyflow = source["use_for_moneyflow"];
+	        this.moneyflow_days = source["moneyflow_days"];
 	    }
 	}
 	export class SFLVerifyResult {
@@ -1189,6 +1191,7 @@ export namespace main {
 	    items: StockMoneyflowItem[];
 	    has_data: boolean;
 	    summary: string;
+	    days: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new StockMoneyflowResult(source);
@@ -1200,6 +1203,7 @@ export namespace main {
 	        this.items = this.convertValues(source["items"], StockMoneyflowItem);
 	        this.has_data = source["has_data"];
 	        this.summary = source["summary"];
+	        this.days = source["days"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

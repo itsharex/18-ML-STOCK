@@ -3517,6 +3517,19 @@ type StockMoneyflowResult struct {
 	Items   []StockMoneyflowItem `json:"items"`
 	HasData bool                 `json:"has_data"`
 	Summary string               `json:"summary"` // 简要分析
+	Days    int                  `json:"days"`    // 查询的交易日数
+}
+
+// retailSummary 生成散户（小单）流向文案
+// 当主力流出、散户流入时，用"散户接盘"表述，更直观
+func retailSummary(totalRetail float64) string {
+	if totalRetail > 0 {
+		return fmt.Sprintf("散户接盘 %.2f 亿元", totalRetail/10000)
+	}
+	if totalRetail < 0 {
+		return fmt.Sprintf("散户净流出 %.2f 亿元", -totalRetail/10000)
+	}
+	return "散户无进出"
 }
 
 // GetStockMoneyflow 获取个股近 N 日资金流向（优先数据源）
@@ -3532,12 +3545,24 @@ func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult,
 	code := parts[0]
 	market := strings.ToUpper(parts[1])
 
+	// 扩大查询范围：自然日可能包含周末/节假日，实际交易日远少于自然日
+	// 取 3 倍自然日范围确保覆盖足够交易日，返回后前端只取最近 3 条
 	end := time.Now().Format("20060102")
-	start := time.Now().AddDate(0, 0, -days).Format("20060102")
+	start := time.Now().AddDate(0, 0, -days*3).Format("20060102")
 
 	items, err := a.dataRouter.FetchMoneyflow(market, code, start, end)
-	if err != nil || len(items) == 0 {
-		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "暂无资金流向数据"}, nil
+	if err != nil {
+		fmt.Printf("[GetStockMoneyflow] %s %s-%s error: %v\n", symbol, start, end, err)
+		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: fmt.Sprintf("资金流向获取失败: %v", err)}, nil
+	}
+	if len(items) == 0 {
+		fmt.Printf("[GetStockMoneyflow] %s %s-%s empty result\n", symbol, start, end)
+		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: "暂无资金流向数据（API返回空）"}, nil
+	}
+
+	// API 返回按日期降序排列（最新在前），只取前 days 条与用户配置的展示条数对齐
+	if len(items) > days {
+		items = items[:days]
 	}
 
 	result := &StockMoneyflowResult{
@@ -3547,6 +3572,7 @@ func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult,
 	}
 
 	var totalMain float64
+	var totalRetail float64
 	var inflowDays int
 	for _, item := range items {
 		smNet := item.BuySmAmount - item.SellSmAmount
@@ -3565,22 +3591,25 @@ func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult,
 		})
 
 		totalMain += mainInflow
+		totalRetail += smNet
 		if mainInflow > 0 {
 			inflowDays++
 		}
 	}
 
-	// 生成简要分析
+	// 生成简要分析（统计口径与表格展示完全一致）
 	dayCount := len(items)
+	retailText := retailSummary(totalRetail)
 	if inflowDays == dayCount {
-		result.Summary = fmt.Sprintf("近%d日主力持续流入，累计 %.2f 亿元", dayCount, totalMain/10000)
+		result.Summary = fmt.Sprintf("主力持续流入 %.2f 亿元；%s", totalMain/10000, retailText)
 	} else if inflowDays == 0 {
-		result.Summary = fmt.Sprintf("近%d日主力持续流出，累计 %.2f 亿元", dayCount, totalMain/10000)
+		result.Summary = fmt.Sprintf("主力持续流出 %.2f 亿元；%s", -totalMain/10000, retailText)
 	} else if totalMain > 0 {
-		result.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流入 %.2f 亿元", dayCount, inflowDays, totalMain/10000)
+		result.Summary = fmt.Sprintf("主力%d日流入，累计净流入 %.2f 亿元；%s", inflowDays, totalMain/10000, retailText)
 	} else {
-		result.Summary = fmt.Sprintf("近%d日主力%d日流入，累计净流出 %.2f 亿元", dayCount, inflowDays, -totalMain/10000)
+		result.Summary = fmt.Sprintf("主力%d日流入，累计净流出 %.2f 亿元；%s", inflowDays, -totalMain/10000, retailText)
 	}
+	result.Days = days
 
 	return result, nil
 }

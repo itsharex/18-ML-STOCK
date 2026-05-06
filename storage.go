@@ -951,6 +951,7 @@ type SFLConfig struct {
 	UseForKline     bool  `json:"use_for_kline"`
 	UseForQuote     bool  `json:"use_for_quote"`
 	UseForMoneyflow bool  `json:"use_for_moneyflow"`
+	MoneyflowDays   int   `json:"moneyflow_days"`
 }
 
 // SFLConfigPath 返回 SFL 配置文件路径
@@ -970,6 +971,7 @@ func (s *Storage) LoadSFLConfig() (*SFLConfig, error) {
 				UseForKline:     true,
 				UseForQuote:     true,
 				UseForMoneyflow: true,
+				MoneyflowDays:   3,
 			}, nil
 		}
 		return nil, err
@@ -977,6 +979,9 @@ func (s *Storage) LoadSFLConfig() (*SFLConfig, error) {
 	var cfg SFLConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("解析SFL 配置失败: %w", err)
+	}
+	if cfg.MoneyflowDays <= 0 {
+		cfg.MoneyflowDays = 3
 	}
 	return &cfg, nil
 }

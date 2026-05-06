@@ -112,7 +112,8 @@ export function Settings({
     }).catch(() => {
       setSflCfg({
         enabled: false, token: '', verified: false, verified_at: '',
-        use_for_financial: true, use_for_kline: true, use_for_quote: true, use_for_moneyflow: true
+        use_for_financial: true, use_for_kline: true, use_for_quote: true, use_for_moneyflow: true,
+        moneyflow_days: 3
       } as main.SFLConfig)
     })
   }, [isOpen])
@@ -168,7 +169,7 @@ export function Settings({
     saveSettings(newSettings)
   }
 
-  const version = '1.3.31'
+  const version = '1.3.32'
 
   return (
     <>
@@ -397,7 +398,37 @@ export function Settings({
                             <label><input type="checkbox" checked={sflCfg.use_for_financial} onChange={(e) => setSflCfg({ ...sflCfg, use_for_financial: e.target.checked })} /> 财报数据</label>
                             <label><input type="checkbox" checked={sflCfg.use_for_kline} onChange={(e) => setSflCfg({ ...sflCfg, use_for_kline: e.target.checked })} /> 历史K线</label>
                             <label><input type="checkbox" checked={sflCfg.use_for_quote} onChange={(e) => setSflCfg({ ...sflCfg, use_for_quote: e.target.checked })} /> 每日指标（PE/PB/市值）</label>
-                            <label><input type="checkbox" checked={sflCfg.use_for_moneyflow} onChange={(e) => setSflCfg({ ...sflCfg, use_for_moneyflow: e.target.checked })} /> 个股资金流向</label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <input type="checkbox" checked={sflCfg.use_for_moneyflow} onChange={(e) => setSflCfg({ ...sflCfg, use_for_moneyflow: e.target.checked })} />
+                              <span>个股资金流向</span>
+                              {sflCfg.enabled && sflCfg.use_for_moneyflow && (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={20}
+                                    value={sflCfg.moneyflow_days || 3}
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value, 10)
+                                      if (!isNaN(val) && val >= 1 && val <= 20) {
+                                        setSflCfg({ ...sflCfg, moneyflow_days: val })
+                                      }
+                                    }}
+                                    style={{
+                                      width: 36,
+                                      height: 20,
+                                      fontSize: 11,
+                                      textAlign: 'center',
+                                      borderRadius: 3,
+                                      border: '1px solid #cbd5e1',
+                                      background: '#f8fafc',
+                                      color: '#334155',
+                                    }}
+                                  />
+                                  <span style={{ fontSize: 11, color: '#64748b' }}>个交易日</span>
+                                </span>
+                              )}
+                            </label>
                           </div>
                         </div>
                       </>
