@@ -339,6 +339,10 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const reportContentRef = useRef<HTMLDivElement>(null)
   const dragIndexRef = useRef<number | null>(null)
+  const watchlistRef = useRef<HTMLUListElement>(null)
+  const dragOverIndexRef = useRef<number | null>(null)
+  const originalOrderRef = useRef<WatchlistItem[]>([])
+  const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const reportSearchRef = useRef<HTMLInputElement>(null)
   const reportMatchesRef = useRef<HTMLElement[]>([])
   const reportSearchIndexRef = useRef(0)
@@ -2163,7 +2167,7 @@ function App() {
           </span>
           <span className="watch-header-action" />
         </div>
-        <ul className="watchlist">
+        <ul className="watchlist" ref={watchlistRef}>
           {displayWatchlist.map((s, idx) => {
             const act = activityMap[s.code]
             const scoreText = act ? Math.round(act.score).toString() : '-'
@@ -2171,29 +2175,7 @@ function App() {
               <li
                 key={s.code}
                 data-code={s.code}
-                draggable={activitySort === 'none' && watchlistFilter === 'none' && watchlistIndustryFilter === '全部'}
-                className={`${selectedCode === s.code ? 'active' : ''}${flashCode === s.code ? ' flash-match' : ''}`}
-                onDragStart={() => {
-                  dragIndexRef.current = idx
-                }}
-                onDragOver={(e) => {
-                  if (activitySort !== 'none' || watchlistFilter !== 'none' || watchlistIndustryFilter !== '全部') return
-                  e.preventDefault()
-                }}
-                onDrop={(e) => {
-                  if (activitySort !== 'none' || watchlistFilter !== 'none' || watchlistIndustryFilter !== '全部') return
-                  e.preventDefault()
-                  const fromIdx = dragIndexRef.current
-                  dragIndexRef.current = null
-                  if (fromIdx === null || fromIdx === idx) return
-                  const newList = [...displayWatchlist]
-                  const [moved] = newList.splice(fromIdx, 1)
-                  newList.splice(idx, 0, moved)
-                  setWatchlist(newList)
-                  setActivitySort('none')
-                  const codes = newList.map((i) => i.code)
-                  ReorderWatchlist(codes).catch((err) => console.error('排序保存失败:', err))
-                }}
+                className={`${selectedCode === s.code ? 'active' : ''}${flashCode === s.code ? ' flash-match' : ''}${draggingIndex === idx ? ' dragging' : ''}`}
                 onClick={() => {
                   setSelectedCode(s.code)
                   setHotPanelOpen(false)
@@ -2220,7 +2202,70 @@ function App() {
                   // loadKlines(s.code)
                 }}
               >
-                <span className="watch-drag-handle" title={activitySort === 'none' ? '拖动排序' : '排序中禁用拖动'}>☰</span>
+                <span
+                  className="watch-drag-handle"
+                  title={activitySort === 'none' && watchlistFilter === 'none' && watchlistIndustryFilter === '全部' ? '拖动排序' : '排序中禁用拖动'}
+                  onMouseDown={(e) => {
+                    if (activitySort !== 'none' || watchlistFilter !== 'none' || watchlistIndustryFilter !== '全部') return
+                    if (e.button !== 0) return
+                    e.preventDefault()
+                    e.stopPropagation()
+                    dragIndexRef.current = idx
+                    originalOrderRef.current = [...displayWatchlist]
+                    setDraggingIndex(idx)
+
+                    const onMouseMove = (moveEvent: MouseEvent) => {
+                      const list = watchlistRef.current
+                      if (!list) return
+                      const items = Array.from(list.querySelectorAll('li:not(.watchlist-empty)')) as HTMLElement[]
+                      let closestIdx = 0
+                      let closestDist = Infinity
+                      items.forEach((item, i) => {
+                        const rect = item.getBoundingClientRect()
+                        const centerY = rect.top + rect.height / 2
+                        const dist = Math.abs(moveEvent.clientY - centerY)
+                        if (dist < closestDist) {
+                          closestDist = dist
+                          closestIdx = i
+                        }
+                      })
+                      if (closestIdx !== dragOverIndexRef.current) {
+                        dragOverIndexRef.current = closestIdx
+                        const fromIdx = dragIndexRef.current!
+                        if (fromIdx === closestIdx) return
+                        const newList = [...displayWatchlist]
+                        const [moved] = newList.splice(fromIdx, 1)
+                        newList.splice(closestIdx, 0, moved)
+                        dragIndexRef.current = closestIdx
+                        setWatchlist(newList)
+                      }
+                    }
+
+                    const onMouseUp = (upEvent: MouseEvent) => {
+                      window.removeEventListener('mousemove', onMouseMove)
+                      window.removeEventListener('mouseup', onMouseUp)
+
+                      const list = watchlistRef.current
+                      if (list) {
+                        const rect = list.getBoundingClientRect()
+                        const inside = upEvent.clientX >= rect.left && upEvent.clientX <= rect.right &&
+                                       upEvent.clientY >= rect.top && upEvent.clientY <= rect.bottom
+                        if (inside) {
+                          const codes = displayWatchlist.map((i) => i.code)
+                          ReorderWatchlist(codes).catch((err) => console.error('排序保存失败:', err))
+                        } else {
+                          setWatchlist(originalOrderRef.current)
+                        }
+                      }
+                      setDraggingIndex(null)
+                      dragIndexRef.current = null
+                      dragOverIndexRef.current = null
+                    }
+
+                    window.addEventListener('mousemove', onMouseMove)
+                    window.addEventListener('mouseup', onMouseUp)
+                  }}
+                >☰</span>
                 <div className="watch-info" title={`${s.name}(${s.code})`}>
                   {s.name}<span className="code-part">({s.code})</span>
                 </div>

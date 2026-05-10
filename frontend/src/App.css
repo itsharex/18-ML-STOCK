@@ -439,6 +439,17 @@ body.light .watchlist-footer {
   cursor: grabbing;
 }
 
+.watchlist li.dragging {
+  opacity: 0.6;
+  background: #1e3a5f;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+body.light .watchlist li.dragging {
+  background: #dbeafe;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
 body.light .watch-drag-handle {
   color: #9ca3af;
 }
