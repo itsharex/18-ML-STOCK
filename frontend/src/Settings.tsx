@@ -175,7 +175,7 @@ export function Settings({
     saveSettings(newSettings)
   }
 
-  const version = '1.3.33'
+  const version = '1.3.34'
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateChecking(true)
