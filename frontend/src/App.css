@@ -439,15 +439,46 @@ body.light .watchlist-footer {
   cursor: grabbing;
 }
 
-.watchlist li.dragging {
-  opacity: 0.6;
-  background: #1e3a5f;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+.watchlist li.drag-placeholder {
+  opacity: 0.3;
+  background: transparent;
+  pointer-events: none;
 }
 
-body.light .watchlist li.dragging {
-  background: #dbeafe;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+body.light .watchlist li.drag-placeholder {
+  opacity: 0.3;
+  background: transparent;
+}
+
+.watchlist li.drag-indicator-active {
+  position: relative;
+}
+
+.watchlist li.drag-indicator-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: #3b82f6;
+  z-index: 10;
+  pointer-events: none;
+}
+
+body.light .watchlist li.drag-indicator-active::before {
+  background: #2563eb;
+}
+
+.drag-ghost {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 13px;
 }
 
 body.light .watch-drag-handle {

@@ -343,6 +343,8 @@ function App() {
   const dragOverIndexRef = useRef<number | null>(null)
   const originalOrderRef = useRef<WatchlistItem[]>([])
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const ghostElRef = useRef<HTMLDivElement | null>(null)
   const reportSearchRef = useRef<HTMLInputElement>(null)
   const reportMatchesRef = useRef<HTMLElement[]>([])
   const reportSearchIndexRef = useRef(0)
@@ -2175,7 +2177,7 @@ function App() {
               <li
                 key={s.code}
                 data-code={s.code}
-                className={`${selectedCode === s.code ? 'active' : ''}${flashCode === s.code ? ' flash-match' : ''}${draggingIndex === idx ? ' dragging' : ''}`}
+                className={`${selectedCode === s.code ? 'active' : ''}${flashCode === s.code ? ' flash-match' : ''}${draggingIndex === idx ? ' drag-placeholder' : ''}${draggingIndex !== null && dragOverIndex === idx ? ' drag-indicator-active' : ''}`}
                 onClick={() => {
                   setSelectedCode(s.code)
                   setHotPanelOpen(false)
@@ -2210,34 +2212,59 @@ function App() {
                     if (e.button !== 0) return
                     e.preventDefault()
                     e.stopPropagation()
+
+                    const li = (e.target as HTMLElement).closest('li') as HTMLElement
+                    if (!li) return
+                    const rect = li.getBoundingClientRect()
+                    const offsetX = e.clientX - rect.left
+                    const offsetY = e.clientY - rect.top
+
                     dragIndexRef.current = idx
                     originalOrderRef.current = [...displayWatchlist]
                     setDraggingIndex(idx)
+                    setDragOverIndex(idx)
+
+                    // 创建幽灵元素
+                    const ghost = li.cloneNode(true) as HTMLDivElement
+                    ghost.style.position = 'fixed'
+                    ghost.style.left = rect.left + 'px'
+                    ghost.style.top = rect.top + 'px'
+                    ghost.style.width = rect.width + 'px'
+                    ghost.style.height = rect.height + 'px'
+                    ghost.style.zIndex = '1000'
+                    ghost.style.pointerEvents = 'none'
+                    ghost.style.opacity = '0.9'
+                    ghost.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)'
+                    ghost.style.transform = 'scale(1.02)'
+                    ghost.style.transition = 'none'
+                    ghost.classList.add('drag-ghost')
+                    document.body.appendChild(ghost)
+                    ghostElRef.current = ghost
 
                     const onMouseMove = (moveEvent: MouseEvent) => {
+                      // 移动幽灵
+                      if (ghostElRef.current) {
+                        ghostElRef.current.style.left = (moveEvent.clientX - offsetX) + 'px'
+                        ghostElRef.current.style.top = (moveEvent.clientY - offsetY) + 'px'
+                      }
+
+                      // 计算插入位置
                       const list = watchlistRef.current
                       if (!list) return
                       const items = Array.from(list.querySelectorAll('li:not(.watchlist-empty)')) as HTMLElement[]
-                      let closestIdx = 0
-                      let closestDist = Infinity
-                      items.forEach((item, i) => {
-                        const rect = item.getBoundingClientRect()
-                        const centerY = rect.top + rect.height / 2
-                        const dist = Math.abs(moveEvent.clientY - centerY)
-                        if (dist < closestDist) {
-                          closestDist = dist
+                      let closestIdx = items.length
+                      for (let i = 0; i < items.length; i++) {
+                        const item = items[i]
+                        const r = item.getBoundingClientRect()
+                        const midY = r.top + r.height / 2
+                        if (moveEvent.clientY < midY) {
                           closestIdx = i
+                          break
                         }
-                      })
+                      }
                       if (closestIdx !== dragOverIndexRef.current) {
                         dragOverIndexRef.current = closestIdx
-                        const fromIdx = dragIndexRef.current!
-                        if (fromIdx === closestIdx) return
-                        const newList = [...displayWatchlist]
-                        const [moved] = newList.splice(fromIdx, 1)
-                        newList.splice(closestIdx, 0, moved)
-                        dragIndexRef.current = closestIdx
-                        setWatchlist(newList)
+                        setDragOverIndex(closestIdx)
                       }
                     }
 
@@ -2245,19 +2272,34 @@ function App() {
                       window.removeEventListener('mousemove', onMouseMove)
                       window.removeEventListener('mouseup', onMouseUp)
 
+                      // 移除幽灵
+                      if (ghostElRef.current) {
+                        document.body.removeChild(ghostElRef.current)
+                        ghostElRef.current = null
+                      }
+
                       const list = watchlistRef.current
                       if (list) {
                         const rect = list.getBoundingClientRect()
                         const inside = upEvent.clientX >= rect.left && upEvent.clientX <= rect.right &&
                                        upEvent.clientY >= rect.top && upEvent.clientY <= rect.bottom
                         if (inside) {
-                          const codes = displayWatchlist.map((i) => i.code)
-                          ReorderWatchlist(codes).catch((err) => console.error('排序保存失败:', err))
-                        } else {
-                          setWatchlist(originalOrderRef.current)
+                          const fromIdx = dragIndexRef.current!
+                          const toIdx = dragOverIndexRef.current ?? fromIdx
+                          if (fromIdx !== toIdx) {
+                            const newList = [...originalOrderRef.current]
+                            const [moved] = newList.splice(fromIdx, 1)
+                            // 如果 toIdx > fromIdx，由于 splice 后索引变化，需要调整
+                            const insertIdx = toIdx > fromIdx ? toIdx - 1 : toIdx
+                            newList.splice(insertIdx, 0, moved)
+                            setWatchlist(newList)
+                            const codes = newList.map((i) => i.code)
+                            ReorderWatchlist(codes).catch((err) => console.error('排序保存失败:', err))
+                          }
                         }
                       }
                       setDraggingIndex(null)
+                      setDragOverIndex(null)
                       dragIndexRef.current = null
                       dragOverIndexRef.current = null
                     }
