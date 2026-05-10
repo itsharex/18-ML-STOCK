@@ -481,6 +481,12 @@ body.light .watchlist li.drag-indicator-active::before {
   font-size: 13px;
 }
 
+body.light .drag-ghost {
+  background: #ffffff;
+  color: #1f2937;
+  border: 1px solid #e5e7eb;
+}
+
 body.light .watch-drag-handle {
   color: #9ca3af;
 }
