@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-**StockFinLens（股票财报透镜）** 是一款基于 Wails v2 的跨平台桌面股票财报透视分析工具，支持 A 股与港股。它通过多层分析引擎（18 步财务透视、A-Score 风险评分、可比公司横向对比、ML 三引擎预测、RIM 估值、技术形态与交易活跃度分析等）生成深度 Markdown 分析报告。
+**StockFinLens（股票财报透镜）** 是一款基于 Wails v2 的跨平台桌面股票财报透视分析工具，支持 A 股与港股。它通过多层分析引擎（财报透镜财务透视、A-Score 风险评分、可比公司横向对比、ML 三引擎预测、RIM 估值、技术形态与交易活跃度分析等）生成深度 Markdown 分析报告。
 
 - **模块名**: `github.com/liusaipu/stockfinlens`
 - **当前版本**: `1.3.29`（见 `wails.json` 的 `info.productVersion` 与 `frontend/src/Settings.tsx` 的 `const version`）
@@ -65,8 +65,8 @@ stockfinlens/
 │
 ├── analyzer/                     # 核心分析引擎（纯逻辑，无网络 I/O，25+ 个文件）
 ├── updater/                      # 自动更新（GitHub Release 检测、多源下载、跨平台安装）
-│   ├── engine.go                 # 18 步分析主入口（RunAnalysisWithAll 等）
-│   ├── steps.go                  # 18 步财务透视具体实现
+│   ├── engine.go                 # 财报透镜分析主入口（RunAnalysisWithAll 等）
+│   ├── steps.go                  # 财报透镜财务透视具体实现
 │   ├── evaluator.go              # 评分与评级逻辑（100 分制，A-F 等级）
 │   ├── report.go                 # Markdown 报告生成器（16 模块）
 │   ├── ascore_module.go          # A-Score 风险评分报告渲染（模块 8）
@@ -244,7 +244,7 @@ go test ./downloader/...
 
 ### 构建注意事项
 
-1. **版本号一致性（硬要求）**: `wails.json` 中的 `info.productVersion` 必须与 `frontend/src/Settings.tsx` 中的 `const version` 完全一致。两个构建脚本都会校验此项，不一致会**中断构建**。当前版本为 `1.3.34`。
+1. **版本号一致性（硬要求）**: `wails.json` 中的 `info.productVersion` 必须与 `frontend/src/Settings.tsx` 中的 `const version` 完全一致。两个构建脚本都会校验此项，不一致会**中断构建**。当前版本为 `1.3.35`。
 2. **前端 dist 重建**: 如果前端代码有变更，构建前必须确保 `frontend/dist` 是最新的。Wails `build` 在 `dist` 已存在时可能跳过前端构建，导致打包旧代码。建议手动执行 `cd frontend && npm run build`。
 3. **打包产物必须包含**: `ml_models/` 和 `scripts/` 目录。Go 后端在运行时会从可执行文件同级目录查找这些路径。
 4. **开发模式 vs 生产模式**: `main.go` 中 `readStockJSON()` 优先读取本地 `data/stocks.json`，打包后 fallback 到 `embed.FS`。
@@ -299,39 +299,61 @@ go test ./downloader/...
 | 热门概念排行 | `data/hot_concepts/latest.json` | 15 分钟 |
 | 热门概念历史 | `data/hot_concepts/history/YYYY-MM-DD.json` | 永久（保留 30 天） |
 
-### 分析引擎的 18 步流程
+### 分析引擎的财报透镜流程
 
 在 `analyzer/engine.go` 中按顺序执行：
 1. 审计意见 → 2. 资产规模 → 3. 偿债能力 → 4. 竞争地位 → 5. 应收账款 → 6. 固定资产 → 7. 投资资产 → 8. **风险分析（A-Score）** → 9. 营收增长 → 10. 毛利率 → 11. 运营效率 → 12. 成本控制 → 13. 费用率 → 14. 核心利润 → 15. 现金流质量 → 16. ROE → 17. 资本支出 → 18. 分红政策
 
 ## 测试策略
 
-```bash
-# 全部测试
-go test ./...
+### 分层测试体系（L1/L2/L3）
 
-# 仅 analyzer 包测试
-go test ./analyzer/...
+| 层级 | 类型 | 命令 | 用途 |
+|------|------|------|------|
+| **L1** | Go 后端回归 | `go test -short ./...` | CI/CD 入口，无网络，~1s |
+| **L1** | Go 后端完整 | `go test ./...` | 发布前验证，含端到端 |
+| **L2** | 前端组件 | `cd frontend && npm test` | Vitest + React Testing Library |
+| **L3** | E2E（手动） | Playwright（待配置） | 关键用户旅程验证 |
 
-# 仅 downloader 包测试
-go test ./downloader/...
+统一回归入口：`./scripts/run-regression.sh [quick|full]`
 
-# 集成测试（根目录）
-go test -run TestAnalyze603501
-```
+### Go 后端测试文件分布（共 15 个 `*_test.go`）
 
-测试文件分布（共 11 个 `*_test.go`）：
+**analyzer 包（6 个）**：
 - `analyzer/activity_test.go` — 活跃度计算测试（大/中/小市值模拟）
-- `analyzer/ascore_validation_test.go` — A-Score 验证测试（10 只真实股票网络 smoke test）
+- `analyzer/ascore_validation_test.go` — A-Score 验证测试（10 只真实股票网络 smoke test）⚠️ `-short` 跳过
 - `analyzer/data_test.go` — 数据修复逻辑测试（fixMissingData）
 - `analyzer/policy_test.go` — 政策匹配测试
-- `analyzer/report_test.go` — 报告生成测试
-- `downloader/downloader_test.go` — 下载器单元测试（603501 真实数据 + 数据校验）
-- `downloader/hot_concept_test.go` — 热门概念 API 响应解析与综合打分测试
-- `downloader/analyzer_integration_test.go` — 下载器与分析器集成测试
-- `downloader/eastmoney_kline_test.go` — K线数据解析测试（验证偏移格式与标准格式）
+- `analyzer/report_test.go` — 报告生成测试（验证 HTML 结构、tooltip 废弃行为）
+- `analyzer/evaluator_test.go` — 评分与评级逻辑测试
+
+**downloader 包（4 个）**：
+- `downloader/downloader_test.go` — 下载器单元测试（603501 真实数据 + 数据校验）⚠️ `-short` 跳过
+- `downloader/hot_concept_test.go` — 热门概念 API 响应解析与综合打分测试 ⚠️ `-short` 跳过
+- `downloader/analyzer_integration_test.go` — 下载器与分析器集成测试 ⚠️ `-short` 跳过
+- `downloader/eastmoney_kline_test.go` — K线数据解析测试（验证偏移格式与标准格式）⚠️ `-short` 跳过
+
+**main/updater 包（5 个）**：
+- `app_test.go` — Wails 绑定方法测试（Config 持久化、版本号、自选股排序）
+- `regression_test.go` — 端到端回归测试（603501 报告模块完整性、存储 CRUD、评分一致性）⚠️ `-short` 跳过
 - `storage_test.go` — 存储层测试（归档、清理、历史列表）
-- `integration_test.go` — 端到端集成测试（使用 603501 真实 CSV 数据）
+- `integration_test.go` — 端到端集成测试（使用 603501 真实 CSV 数据）⚠️ `-short` 跳过
+- `updater/updater_test.go` — 自动更新纯逻辑测试（版本比对、时间格式化、asset 匹配、多源下载）
+
+### 前端测试（L2）
+
+框架：**Vitest** + **React Testing Library** + **jsdom**
+
+```bash
+cd frontend
+npm test          # 运行所有测试
+npm run test:ui   # 打开 UI 界面
+```
+
+测试文件：
+- `frontend/src/Settings.test.ts` — Settings 工具函数测试（loadSettings/saveSettings）
+
+> 前端组件测试正在建设中。App.tsx 等复杂组件的测试需要先 mock Wails 运行时绑定。
 
 ## ML 模型架构
 
@@ -430,10 +452,17 @@ Python 脚本与模型文件的路径解析采用 **4 级回退**：
 
 1. **版本号同步**: 确保 `wails.json` 与 `frontend/src/Settings.tsx` 版本一致。
 2. **更新 CHANGELOG.md**: 在顶部追加新版本说明。
-3. **提交并推送**: `git commit`, `git push origin main`
-4. **打标签**: `git tag v1.3.29`, `git push origin v1.3.29`
-5. **构建发布包**:
+3. **完整回归测试（硬性要求）**:
+   ```bash
+   ./scripts/run-regression.sh full
+   ```
+   - 必须 **全部通过** 才能继续发布
+   - 结果自动保存到 `test-results/regression_full_YYYYMMDD_HHMMSS.log`
+   - 失败时脚本返回非零 exit code 并阻止后续步骤
+4. **提交并推送**: `git commit`, `git push origin main`
+5. **打标签**: `git tag v1.3.29`, `git push origin v1.3.29`
+6. **构建发布包**:
    - Windows: ` .\build-windows.ps1 package`
    - macOS: `./build-release.sh mac`
-6. **创建 GitHub Release**: 上传 ZIP/DMG，将 `CHANGELOG.md` 对应章节粘贴到 Release Notes。
-7. **版本号递增**: 发布后立刻将两个文件版本号 bump 到下一个未发布版本（如 `1.3.30`）。
+7. **创建 GitHub Release**: 上传 ZIP/DMG，将 `CHANGELOG.md` 对应章节粘贴到 Release Notes，并附上 `test-results/latest_summary.md` 测试报告。
+8. **版本号递增**: 发布后立刻将两个文件版本号 bump 到下一个未发布版本（如 `1.3.30`）。

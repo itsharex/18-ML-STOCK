@@ -17,7 +17,7 @@ export interface AppSettings {
   autoCheckUpdate: boolean
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   klineDefaultRange: '6m',
   showMA5: true,
@@ -175,7 +175,7 @@ export function Settings({
     saveSettings(newSettings)
   }
 
-  const version = '1.3.34'
+  const version = '1.3.35'
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateChecking(true)

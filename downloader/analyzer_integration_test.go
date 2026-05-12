@@ -10,6 +10,9 @@ import (
 )
 
 func TestDownloadAndAnalyze603501(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过网络测试，使用 -short 运行快速回归")
+	}
 	data, err := DownloadFinancialReports("SH", "603501")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)

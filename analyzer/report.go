@@ -449,6 +449,9 @@ func writeModule3(b *strings.Builder, steps []StepResult, years []string, latest
 	b.WriteString("\n")
 	b.WriteString("> **解读**: 持续观察ROE和毛利率的趋势变化，若连续下滑需警惕竞争力衰退；资产负债率稳定或下降为加分项。M-Score已纳入A-Score综合风险体系，A-Score≥60时建议重点核查财报真实性与偿债能力。\n\n")
 
+	// 财务趋势图表（与中栏"财务趋势"弹窗保持一致）
+	b.WriteString(`<div class="chart-financial-trend"></div>` + "\n\n")
+
 	b.WriteString(fmt.Sprintf("## 3.3 财务指标逐项解读（%s）\n\n", latest))
 	categories := []struct {
 		name  string

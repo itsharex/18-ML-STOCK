@@ -9,6 +9,9 @@ import (
 )
 
 func TestAScoreValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("跳过网络测试，使用 -short 运行快速回归")
+	}
 	stocks := []struct {
 		symbol string
 		name   string

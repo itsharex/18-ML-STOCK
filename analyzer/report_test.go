@@ -110,22 +110,10 @@ func TestGenerateMarkdownMock(t *testing.T) {
 	fmt.Println("\n... (truncated) ...")
 }
 
-// TestInfoTooltipHTML 验证 tooltip 使用 span 结构而非 details
+// TestInfoTooltipHTML 验证 infoTooltipHTML 已废弃返回空字符串
 func TestInfoTooltipHTML(t *testing.T) {
 	html := infoTooltipHTML("测试标题", "测试内容")
-	if strings.Contains(html, "<details") {
-		t.Error("infoTooltipHTML 不应使用 <details> 标签")
-	}
-	if !strings.Contains(html, `<span class="inline-tooltip">`) {
-		t.Error("infoTooltipHTML 应包含 <span class=\"inline-tooltip\">")
-	}
-	if !strings.Contains(html, `<span class="inline-tooltip-trigger">`) {
-		t.Error("infoTooltipHTML 应包含 inline-tooltip-trigger")
-	}
-	if !strings.Contains(html, `<span class="inline-tooltip-body">`) {
-		t.Error("infoTooltipHTML 应包含 inline-tooltip-body")
-	}
-	if !strings.Contains(html, "ℹ️") {
-		t.Error("infoTooltipHTML 应包含 ℹ️ 图标")
+	if html != "" {
+		t.Errorf("infoTooltipHTML 已废弃，应返回空字符串，实际返回: %s", html)
 	}
 }

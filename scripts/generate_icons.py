@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 Generate app icons for Windows (.ico) and macOS (.icns / AppIcon.iconset)
-from a source image, with design enhancements.
+from a source image.
 """
 import os
 import sys
-from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+import struct
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFilter
 
 # Paths
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,21 +37,6 @@ def rounded_rect_mask(size, radius_ratio=0.22):
     return mask
 
 
-def make_gradient(size, color_top, color_bottom):
-    """Create a vertical gradient image."""
-    w, h = size
-    base = Image.new("RGBA", size, color_top)
-    draw = ImageDraw.Draw(base)
-    for y in range(h):
-        ratio = y / (h - 1) if h > 1 else 0
-        r = int(color_top[0] * (1 - ratio) + color_bottom[0] * ratio)
-        g = int(color_top[1] * (1 - ratio) + color_bottom[1] * ratio)
-        b = int(color_top[2] * (1 - ratio) + color_bottom[2] * ratio)
-        a = int(color_top[3] * (1 - ratio) + color_bottom[3] * ratio)
-        draw.line([(0, y), (w - 1, y)], fill=(r, g, b, a))
-    return base
-
-
 def make_radial_gradient(size, center_color, edge_color):
     """Create a radial gradient image (center bright -> edge dark)."""
     w, h = size
@@ -59,7 +46,7 @@ def make_radial_gradient(size, center_color, edge_color):
     pixels = img.load()
     for y in range(h):
         for x in range(w):
-            dist = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            dist = ((x - cx)**2 + (y - cy)**2) ** 0.5
             t = min(1.0, dist / max_dist)
             r = int(center_color[0] * (1 - t) + edge_color[0] * t)
             g = int(center_color[1] * (1 - t) + edge_color[1] * t)
@@ -69,209 +56,47 @@ def make_radial_gradient(size, center_color, edge_color):
     return img
 
 
-def remove_white_bg_smart(img, threshold=210):
-    """Remove white/light background and clean edge halos."""
-    pixels = img.load()
-    width, height = img.size
-    for y in range(height):
-        for x in range(width):
-            r, g, b, a = pixels[x, y]
-            # Pure white -> transparent
-            if r >= 245 and g >= 245 and b >= 245:
-                pixels[x, y] = (r, g, b, 0)
-                continue
-            # Calculate brightness and colorfulness
-            whiteness = max(r, g, b)
-            min_val = min(r, g, b)
-            color_range = max(r, g, b) - min_val
-            # If very bright and not very colorful, it's background fringe
-            if whiteness > threshold and color_range < 80:
-                fade = max(0, int(255 * (1.0 - (whiteness - threshold) / (255 - threshold))))
-                pixels[x, y] = (r, g, b, min(a, fade))
-            elif whiteness > 230 and color_range < 50:
-                # Aggressive fade for gray-ish bright pixels
-                fade = max(0, int(255 * (1.0 - (whiteness - 200) / 55)))
-                pixels[x, y] = (r, g, b, min(a, fade))
-    
-    # Second pass: edge halo cleanup
-    # Find pixels that are semi-transparent but have high brightness -> likely halo
-    for y in range(height):
-        for x in range(width):
-            r, g, b, a = pixels[x, y]
-            if 10 < a < 180:
-                brightness = (r + g + b) / 3
-                # If a semi-transparent pixel is bright, reduce alpha more
-                if brightness > 180:
-                    new_a = int(a * 0.3)
-                    pixels[x, y] = (r, g, b, new_a)
-                elif brightness > 150:
-                    new_a = int(a * 0.6)
-                    pixels[x, y] = (r, g, b, new_a)
-    return img
-
-
-def prepare_source():
-    """Load source, upscale, remove bg, thicken strokes to solid red."""
-    src = Image.open(SRC_IMG).convert("RGBA")
-    
-    # Upscale for smooth edges
-    upscale = 12
-    src = src.resize((src.width * upscale, src.height * upscale), Image.LANCZOS)
-    
-    # Remove white background
-    src = remove_white_bg_smart(src, threshold=210)
-    
-    # Thicken strokes: double dilation for bold lines (same as preview_2)
-    r, g, b, a = src.split()
-    a = a.filter(ImageFilter.MaxFilter(5))
-    a = a.filter(ImageFilter.MaxFilter(5))
-    
-    # Slight blur for softer edges, then gentle sharpen
-    a = a.filter(ImageFilter.GaussianBlur(radius=1))
-    a = a.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
-    
-    # Flatten to solid red base, then add subtle radial highlight at cross area
-    RED, GREEN, BLUE = 235, 28, 38
-    red   = a.point(lambda x: RED   if x > 0 else 0)
-    green = a.point(lambda x: GREEN if x > 0 else 0)
-    blue  = a.point(lambda x: BLUE  if x > 0 else 0)
-    src = Image.merge("RGBA", (red, green, blue, a))
-    
-    # Subtle radial gradient: center (cross area) slightly brighter, edges slightly darker
-    w, h = src.size
-    cx, cy = w / 2, h / 2
-    max_r = ((w/2)**2 + (h/2)**2) ** 0.5 * 0.55
-    pixels = src.load()
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a_val = pixels[x, y]
-            if a_val > 20:
-                dist = ((x - cx)**2 + (y - cy)**2) ** 0.5
-                t = min(1.0, dist / max_r)
-                # Center brighter (highlight cross), edge darker (subtle shadow)
-                brightness = 1.0 - t * 0.35  # 0.65 to 1.0 range
-                nr = min(255, int(RED * brightness + 35 * (1 - brightness)))
-                ng = min(255, int(GREEN * brightness + 12 * (1 - brightness)))
-                nb = min(255, int(BLUE * brightness + 18 * (1 - brightness)))
-                pixels[x, y] = (nr, ng, nb, a_val)
-    
-    return src
-
-
-def add_drop_shadow(img, offset=(0, 10), blur=18, shadow_color=(0, 0, 0, 110)):
-    """Add a soft drop shadow beneath an RGBA image."""
-    w, h = img.size
-    pad = blur * 2
-    shadow = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
-    alpha = img.split()[3]
-    shadow.paste(shadow_color, (pad, pad), alpha)
-    shadow = shadow.filter(ImageFilter.GaussianBlur(blur / 2))
-    result = Image.new("RGBA", shadow.size, (0, 0, 0, 0))
-    result.paste(shadow, (0, 0), shadow)
-    result.paste(img, (pad - offset[0], pad - offset[1]), img)
-    return result
-
-
-def add_outer_glow(img, blur=40, glow_color=(220, 30, 40, 70)):
-    """Add a subtle red outer glow behind the image."""
-    w, h = img.size
-    pad = blur * 2
-    glow = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
-    alpha = img.split()[3]
-    glow.paste(glow_color, (pad, pad), alpha)
-    glow = glow.filter(ImageFilter.GaussianBlur(blur / 2))
-    result = Image.new("RGBA", glow.size, (0, 0, 0, 0))
-    result.paste(glow, (0, 0), glow)
-    result.paste(img, (pad, pad), img)
-    return result
-
-
-def add_bevel_shadow(img, offset=(-3, 3), shadow_color=(100, 8, 12, 90)):
-    """Add a subtle 3D bevel shadow: shape appears to float with shadow on lower-left."""
-    w, h = img.size
-    r, g, b, a = img.split()
-    
-    # Create canvas large enough for offset
-    pad_x, pad_y = abs(offset[0]), abs(offset[1])
-    canvas = Image.new("RGBA", (w + pad_x * 2, h + pad_y * 2), (0, 0, 0, 0))
-    
-    # Shadow: offset alpha shifted to lower-left
-    shadow_a = a.point(lambda x: int(x * 0.45))
-    shadow_r = shadow_a.point(lambda x: shadow_color[0] if x > 0 else 0)
-    shadow_g = shadow_a.point(lambda x: shadow_color[1] if x > 0 else 0)
-    shadow_b = shadow_a.point(lambda x: shadow_color[2] if x > 0 else 0)
-    shadow_layer = Image.merge("RGBA", (shadow_r, shadow_g, shadow_b, shadow_a))
-    
-    # Paste shadow with offset
-    canvas.paste(shadow_layer, (pad_x + offset[0], pad_y + offset[1]), shadow_layer)
-    # Paste original on top
-    canvas.paste(img, (pad_x, pad_y), img)
-    return canvas
-
-
-def add_outline(img, outline_color=(255, 200, 200, 200), thickness=1):
-    """Add a thin light outline around the shape based on alpha channel."""
-    r, g, b, a = img.split()
-    # Dilate alpha to create outline ring
-    dilated = a.filter(ImageFilter.MaxFilter(2 * thickness + 1))
-    # Outline = dilated - original
-    from PIL import ImageChops
-    outline_mask = ImageChops.difference(dilated, a)
-    # Create outline layer
-    ol_r = outline_mask.point(lambda x: outline_color[0] if x > 0 else 0)
-    ol_g = outline_mask.point(lambda x: outline_color[1] if x > 0 else 0)
-    ol_b = outline_mask.point(lambda x: outline_color[2] if x > 0 else 0)
-    ol_a = outline_mask.point(lambda x: outline_color[3] if x > 0 else 0)
-    outline_layer = Image.merge("RGBA", (ol_r, ol_g, ol_b, ol_a))
-    # Composite: outline behind original
-    return Image.alpha_composite(outline_layer, img)
-
-
-def add_inner_highlight(bg_img, radius_ratio=0.22, opacity=22):
-    """Add a subtle top inner highlight to a rounded rect background."""
-    w, h = bg_img.size
-    radius = int(min(w, h) * radius_ratio)
-    overlay = Image.new("RGBA", (w, h), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    highlight_height = max(2, int(h * 0.12))
-    for y in range(highlight_height):
-        alpha = int(opacity * (1 - y / highlight_height))
-        draw.rounded_rectangle(
-            [3, 3 + y, w - 4, h - 4],
-            radius=max(0, radius - 3),
-            fill=(255, 255, 255, alpha)
-        )
-    result = Image.alpha_composite(bg_img, overlay)
-    return result
-
-
 def create_bg(size, for_macos=False):
     """Create a deep blue radial gradient background with rounded corners."""
     w, h = size
     rr = 0.22 if for_macos else 0.18
     
-    # Deep blue radial gradient: center bright -> edge dark
-    center_color = (50, 75, 145, 255)  # lighter deep blue center
-    edge_color   = (6, 10, 25, 255)    # darker deep blue edge
+    center_color = (50, 75, 145, 255)
+    edge_color = (6, 10, 25, 255)
     bg = make_radial_gradient((w, h), center_color, edge_color)
     
-    # Apply rounded mask
     mask = rounded_rect_mask((w, h), radius_ratio=rr)
     bg.putalpha(mask)
-    
-    # Inner highlight
-    bg = add_inner_highlight(bg, radius_ratio=rr, opacity=25)
     
     return bg
 
 
+def prepare_source():
+    """Load source, remove white background, upscale for smooth edges."""
+    src = Image.open(SRC_IMG).convert("RGBA")
+    
+    # Upscale for smooth edges
+    upscale = 8
+    src = src.resize((src.width * upscale, src.height * upscale), Image.LANCZOS)
+    
+    # Remove white background
+    pixels = src.load()
+    for y in range(src.height):
+        for x in range(src.width):
+            r, g, b, a = pixels[x, y]
+            if r >= 245 and g >= 245 and b >= 245:
+                pixels[x, y] = (r, g, b, 0)
+    
+    return src
+
+
 def generate_icon_design(size, for_macos=False, src=None):
-    """Generate a single enhanced icon at the given size."""
+    """Generate a single icon at the given size."""
     if src is None:
         src = prepare_source()
     
     w = h = size
-    padding = int(size * 0.01)  # minimal padding = W fills almost entire icon
+    padding = int(size * 0.15)  # 15% padding for balanced W size
     target_w = w - padding * 2
     target_h = h - padding * 2
     
@@ -291,16 +116,10 @@ def generate_icon_design(size, for_macos=False, src=None):
     if size <= 64:
         w_img = w_img.filter(ImageFilter.UnsharpMask(radius=2, percent=250, threshold=3))
     
-    # Layer effects: much brighter glow -> shadow
-    w_glow = add_outer_glow(w_img, blur=max(18, size // 14), glow_color=(255, 80, 90, 110))
-    # Small icons: no shadow offset to keep W perfectly centered vertically
-    shadow_offset = (0, 0) if size <= 64 else (0, max(4, size // 40))
-    w_final = add_drop_shadow(w_glow, offset=shadow_offset, blur=max(12, size // 22), shadow_color=(0, 0, 0, 120))
-    
     # Background
     bg = create_bg((w, h), for_macos=for_macos)
     
-    # Vertical nudge: only for large icons (optical center), strict center for small
+    # Vertical nudge for optical center
     nudge = max(1, size // 150) if size >= 128 else 0
     
     # For macOS, add subtle outer shadow to the whole icon
@@ -316,18 +135,18 @@ def generate_icon_design(size, for_macos=False, src=None):
         canvas.paste(bg, (shadow_pad, shadow_pad), bg)
         
         # Center W
-        wx, wy = w_final.size
+        wx, wy = w_img.size
         cx = (canvas.width - wx) // 2
         cy = (canvas.height - wy) // 2 - nudge
-        canvas.paste(w_final, (cx, cy), w_final)
+        canvas.paste(w_img, (cx, cy), w_img)
         return canvas
     else:
         final = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         final.paste(bg, (0, 0), bg)
-        wx, wy = w_final.size
+        wx, wy = w_img.size
         cx = (w - wx) // 2
         cy = (h - wy) // 2 - nudge
-        final.paste(w_final, (cx, cy), w_final)
+        final.paste(w_img, (cx, cy), w_img)
         return final
 
 
@@ -347,18 +166,13 @@ def generate_macos_iconset():
 
 
 def generate_windows_ico():
-    """Generate Windows .ico file with multiple resolutions.
-    PIL's ICO writer is flaky with multi-frame, so we manually assemble.
-    """
+    """Generate Windows .ico file with multiple resolutions."""
     print("Generating Windows icon.ico...")
     src = prepare_source()
     images = []
     for size in WINDOWS_SIZES:
         img = generate_icon_design(size, for_macos=False, src=src)
         images.append(img)
-    
-    import struct
-    from io import BytesIO
     
     # ICONDIR
     icondir = struct.pack('<HHH', 0, 1, len(images))
@@ -375,17 +189,12 @@ def generate_windows_ico():
         data = buf.getvalue()
         png_datas.append(data)
         w, h = img.size
-        # ICO directory entry
         entries.append(struct.pack(
             '<BBBBHHII',
-            w if w < 256 else 0,      # width
-            h if h < 256 else 0,      # height
-            0,                          # colors (0 for PNG)
-            0,                          # reserved
-            1,                          # planes
-            32,                         # bit depth
-            len(data),                  # size in bytes
-            offset                      # offset
+            w if w < 256 else 0,
+            h if h < 256 else 0,
+            0, 0, 1, 32,
+            len(data), offset
         ))
         offset += len(data)
     

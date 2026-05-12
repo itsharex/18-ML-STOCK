@@ -1,5 +1,14 @@
 # Changelog
 
+## [v1.3.35] - 2026-05-12
+
+### 优化 (Improvements)
+- **macOS Dock 图标调整**
+  - 重写图标生成脚本 `scripts/generate_icons.py`，简化渲染逻辑
+  - 使用原始 W logo（`assets/icons/source/red-w.png`），去除白色背景
+  - 添加 15% padding，使图标在 macOS Dock 圆角中居中且不被裁切
+  - 移除过度发光和阴影效果，提升小尺寸下的清晰度
+
 ## [v1.3.33] - 2026-05-08
 
 ### 新增 (Features)

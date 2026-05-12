@@ -75,3 +75,4 @@ financial-analysis-18steps/
 *_分析报告_*.md
 reports/*.md
 /stock-analyzer
+test-results/

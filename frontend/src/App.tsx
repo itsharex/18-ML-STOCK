@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback, Children, cloneEleme
 import './App.css'
 import { STOCKS } from './stocks'
 import { UnifiedChart } from './UnifiedChart'
+import { FinancialTrendChart } from './FinancialTrendChart'
 import { FinancialTrendDrawer } from './FinancialTrendDrawer'
 import { Settings, loadSettings, AppSettings } from './Settings'
 import { ModuleCopyButton, setGlobalMarkdownContent } from './ModuleCopyButton'
@@ -1903,8 +1904,12 @@ function App() {
     },
     div({ className, children, ...props }: any) {
       const code = selectedStock?.code || ''
+      const name = selectedStock?.name || ''
       if (className === 'chart-unified' && code) {
         return <UnifiedChart code={code} quote={quote || undefined} />
+      }
+      if (className === 'chart-financial-trend' && code) {
+        return <FinancialTrendChart code={code} name={name} />
       }
       return (
         <div className={className} {...props}>

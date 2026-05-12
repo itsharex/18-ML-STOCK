@@ -18,6 +18,7 @@ import (
 
 	analyzer "github.com/liusaipu/stockfinlens/analyzer"
 	"github.com/liusaipu/stockfinlens/downloader"
+	"github.com/liusaipu/stockfinlens/tray"
 	"github.com/liusaipu/stockfinlens/updater"
 
 	toast "git.sr.ht/~jackmordaunt/go-toast/v2"
@@ -107,6 +108,9 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
+	// 初始化 macOS 系统托盘（模仿 Swift 项目：应用启动后立即创建）
+	tray.Init(ctx)
+
 	// 初始化本地存储
 	storage, err := NewStorage()
 	if err != nil {
@@ -149,6 +153,9 @@ func (a *App) startup(ctx context.Context) {
 
 	// 启动时自动检查更新（非阻塞，后台执行）
 	go a.checkUpdateOnStartup()
+
+	// 启动 tray 股价轮询（每 30 秒更新一次自选股首只价格）
+	go a.startTrayQuoteUpdater()
 }
 
 // loadStockDB 从嵌入的资源或数据目录加载股票列表
@@ -208,6 +215,84 @@ func (a *App) checkUpdateOnStartup() {
 	if info.HasUpdate && info.LatestVer != a.appConfig.SkipVersion {
 		runtime.EventsEmit(a.ctx, "update:available", info)
 	}
+}
+
+// startTrayQuoteUpdater 后台轮询自选股首只价格并更新 macOS tray
+func (a *App) startTrayQuoteUpdater() {
+	// 稍等启动完成
+	time.Sleep(3 * time.Second)
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// 立即执行一次
+	a.updateTrayQuote()
+
+	for {
+		select {
+		case <-ticker.C:
+			a.updateTrayQuote()
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+// updateTrayQuote 获取自选股首只价格并更新 tray
+func (a *App) updateTrayQuote() {
+	if a.storage == nil {
+		tray.UpdateTitle("SFL", 0)
+		return
+	}
+
+	watchlist, err := a.storage.LoadWatchlist()
+	if err != nil || len(watchlist) == 0 {
+		tray.UpdateTitle("SFL", 0)
+		return
+	}
+
+	// 取首只自选股
+	item := watchlist[0]
+	market := item.Market
+	if market == "" {
+		market = "SZ"
+	}
+	symbol := item.Code + "." + market
+
+	quote, err := a.GetStockQuote(symbol)
+	if err != nil || quote == nil || quote.CurrentPrice <= 0 {
+		// 获取失败时显示名称或代码
+		name := item.Name
+		if name == "" {
+			name = item.Code
+		}
+		tray.UpdateTitle(name, 0)
+		return
+	}
+
+	// 格式化显示：代码 价格 涨跌幅（menu bar 空间有限，尽量精简）
+	changeStr := ""
+	if quote.ChangePercent > 0 {
+		changeStr = fmt.Sprintf(" +%.2f%%", quote.ChangePercent)
+	} else if quote.ChangePercent < 0 {
+		changeStr = fmt.Sprintf(" %.2f%%", quote.ChangePercent)
+	} else {
+		changeStr = " 0.00%"
+	}
+
+	name := item.Name
+	if name == "" {
+		name = item.Code
+	}
+
+	// 截断名称以节省空间（最多4个汉字）
+	runes := []rune(name)
+	if len(runes) > 4 {
+		name = string(runes[:4])
+	}
+
+	title := fmt.Sprintf("%s ¥%.2f%s", name, quote.CurrentPrice, changeStr)
+	tray.UpdateTitle(title, quote.ChangePercent)
 }
 
 // fallbackIndustryScriptPath 返回 fetch_all_industry_data.py 绝对路径
