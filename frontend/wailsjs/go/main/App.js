@@ -150,6 +150,10 @@ export function GetSFLConfig() {
   return window['go']['main']['App']['GetSFLConfig']();
 }
 
+export function GetSnapshotHistory(arg1) {
+  return window['go']['main']['App']['GetSnapshotHistory'](arg1);
+}
+
 export function GetStockConcepts(arg1) {
   return window['go']['main']['App']['GetStockConcepts'](arg1);
 }
@@ -206,12 +210,20 @@ export function LoadAnalysisSnapshot(arg1) {
   return window['go']['main']['App']['LoadAnalysisSnapshot'](arg1);
 }
 
+export function LoadSnapshotByTime(arg1, arg2) {
+  return window['go']['main']['App']['LoadSnapshotByTime'](arg1, arg2);
+}
+
 export function MarkPythonDepsChecked() {
   return window['go']['main']['App']['MarkPythonDepsChecked']();
 }
 
 export function QuickAnalyzeStock(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['QuickAnalyzeStock'](arg1, arg2, arg3, arg4);
+}
+
+export function RecommendComparables(arg1) {
+  return window['go']['main']['App']['RecommendComparables'](arg1);
 }
 
 export function RefreshIndustryBaselines() {

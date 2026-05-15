@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"strings"
 )
 
 // BuildRiskAlertSummary 从财报分析结果中构建风险警示摘要
@@ -271,7 +272,7 @@ func BuildRiskAlertSummary(steps []StepResult, extras map[string]float64, years 
 
 	// 10. 大股东高比例质押
 	pledgeRatio := 0.0
-	if v, ok := extras["pledgeRatio"]; ok {
+	if v, ok := extras["pledge_ratio"]; ok {
 		pledgeRatio = v
 	}
 	if pledgeRatio > thresholds.PledgeExtreme {
@@ -289,7 +290,7 @@ func BuildRiskAlertSummary(steps []StepResult, extras map[string]float64, years 
 
 	// 11. 一年内多次监管问询
 	inquiryCount := 0.0
-	if v, ok := extras["inquiryCount"]; ok {
+	if v, ok := extras["inquiry_count_1y"]; ok {
 		inquiryCount = v
 	}
 	if inquiryCount >= thresholds.InquiryExtreme {
@@ -486,7 +487,7 @@ func BuildRiskAlertSummary(steps []StepResult, extras map[string]float64, years 
 
 	// 8. 大股东减持（直接触发）
 	reductionCount := 0.0
-	if v, ok := extras["reductionCount"]; ok {
+	if v, ok := extras["reduction_count_1y"]; ok {
 		reductionCount = v
 	}
 	if reductionCount >= 1 {
@@ -646,6 +647,39 @@ func BuildRiskAlertSummary(steps []StepResult, extras map[string]float64, years 
 	} else {
 		summary.Level = "low"
 		summary.PrimaryMsg = "🟢 未发现重大风险信号"
+	}
+
+	// 13. 审计意见非标（一票否决）
+	step1 = findStep(1)
+	if step1 != nil {
+		opinion := getString(step1, latest, "opinion")
+		auditor := getString(step1, latest, "auditor")
+		isStandardVal := step1.YearlyData[latest]["isStandard"]
+		var isStandard bool
+		if b, ok := isStandardVal.(bool); ok {
+			isStandard = b
+		}
+		if opinion != "" && opinion != "请查询年报确认" {
+			if !isStandard {
+				// 保留意见 / 无法表示意见 / 否定意见 / 带强调事项段
+				level := "high"
+				if strings.Contains(opinion, "强调事项") {
+					level = "medium"
+				}
+				summary.Flags = append(summary.Flags, RiskAlertFlag{
+					Code:    "audit_nonstandard",
+					Name:    "审计意见非标",
+					Value:   0,
+					Level:   level,
+					Source:  "step1",
+					Format:  fmt.Sprintf("%s（%s）", opinion, auditor),
+					Details: []string{"非标审计意见通常意味着财务报表存在重大不确定性或错报风险"},
+				})
+				if level == "high" {
+					summary.OneVeto = true
+				}
+			}
+		}
 	}
 
 	return summary

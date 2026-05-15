@@ -79,6 +79,8 @@ export function GetRiskSensitivity():Promise<string>;
 
 export function GetSFLConfig():Promise<main.SFLConfig>;
 
+export function GetSnapshotHistory(arg1:string):Promise<Array<main.SnapshotInfo>>;
+
 export function GetStockConcepts(arg1:string):Promise<downloader.StockConcepts>;
 
 export function GetStockDataHistory(arg1:string):Promise<Array<main.HistoryMeta>>;
@@ -107,9 +109,13 @@ export function InstallPythonDependencies(arg1:Array<string>):Promise<void>;
 
 export function LoadAnalysisSnapshot(arg1:string):Promise<analyzer.AnalysisReport>;
 
+export function LoadSnapshotByTime(arg1:string,arg2:string):Promise<analyzer.AnalysisReport>;
+
 export function MarkPythonDepsChecked():Promise<void>;
 
 export function QuickAnalyzeStock(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.QuickAnalysis>;
+
+export function RecommendComparables(arg1:string):Promise<Array<analyzer.ComparableRecommendation>>;
 
 export function RefreshIndustryBaselines():Promise<Record<string, analyzer.IndustryBaseline>>;
 

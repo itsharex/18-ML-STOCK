@@ -13,19 +13,57 @@ func step1Audit(data *FinancialData) StepResult {
 		YearlyData: make(map[string]map[string]any),
 		Pass:       make(map[string]bool),
 	}
-	// 目前无审计数据源，提示用户手动确认
+
+	top10Auditors := map[string]bool{
+		"普华永道": true, "安永": true, "毕马威": true, "德勤": true,
+		"天健": true, "立信": true, "大华": true, "容诚": true,
+		"天职国际": true, "信永中和": true,
+	}
+
 	for _, year := range data.Years {
-		result.YearlyData[year] = map[string]any{
+		yd := map[string]any{
 			"opinion":    "请查询年报确认",
 			"auditor":    "请查询年报确认",
-			"isTop10":    "待确认",
-			"isStandard": "待确认",
+			"isTop10":    false,
+			"isStandard": true,
 		}
-		result.Pass[year] = true // 默认不卡审计（避免无数据时直接淘汰）
+		pass := true
+
+		if data.AuditOpinions != nil {
+			if ao, ok := data.AuditOpinions[year]; ok && ao != nil {
+				yd["opinion"] = ao.Opinion
+				yd["auditor"] = ao.Auditor
+				if ao.Auditor != "" {
+					isTop10 := false
+					for name := range top10Auditors {
+						if contains(ao.Auditor, name) {
+							isTop10 = true
+							break
+						}
+					}
+					yd["isTop10"] = isTop10
+				} else {
+					yd["isTop10"] = "未知"
+				}
+				yd["isStandard"] = ao.IsStandard
+				if !ao.IsStandard {
+					pass = false
+					if ao.NeedsReview {
+						yd["opinion"] = ao.Opinion + "（需人工复核）"
+					}
+				}
+			}
+		}
+
+		result.YearlyData[year] = yd
+		result.Pass[year] = pass
 	}
-	result.Conclusion = "本步需手动查询年报确认审计意见类型及事务所资质。十大审计师事务所：普华永道、安永、毕马威、德勤、天健、立信、大华、容诚、天职国际、信永中和。"
+
+	result.Conclusion = "审计意见数据来自巨潮资讯网公告解析，非标意见已自动标注。十大审计师事务所：普华永道、安永、毕马威、德勤、天健、立信、大华、容诚、天职国际、信永中和。"
 	return result
 }
+
+
 
 // ==================== Step 2: 资产规模 ====================
 func step2AssetScale(data *FinancialData) StepResult {

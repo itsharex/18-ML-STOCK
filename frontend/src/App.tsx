@@ -14,7 +14,7 @@ import { RiskAlertBanner } from './components/RiskAlertBanner'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
-import rehypeRaw from 'rehype-raw'
+
 import { pinyin } from 'pinyin-pro'
 
 function formatAmount(val: number, unit: string): string {
@@ -169,6 +169,7 @@ import {
   SendNotification,
   HasPythonDepsChecked,
   GetSFLConfig,
+  RecommendComparables,
 } from '../wailsjs/go/main/App'
 import type { main, analyzer, downloader } from '../wailsjs/go/models'
 
@@ -261,6 +262,8 @@ function App() {
   const [appliedComparables, setAppliedComparables] = useState<string[]>([])
   const [compQuery, setCompQuery] = useState('')
   const [showCompDropdown, setShowCompDropdown] = useState(false)
+  const [compRecommendations, setCompRecommendations] = useState<analyzer.ComparableRecommendation[]>([])
+  const [compRecommending, setCompRecommending] = useState(false)
   const [compDownloading, setCompDownloading] = useState(false)
   const [compReportsDownloaded, setCompReportsDownloaded] = useState(false)
   const [compDownloadStatus, setCompDownloadStatus] = useState<{type: 'success' | 'error' | null, message: string}>({type: null, message: ''})
@@ -390,8 +393,8 @@ function App() {
     { label: '模块8: 技术面分析', id: '模块8-技术面分析' },
     { label: '模块9: ML机器学习预测', id: '模块9-ml机器学习预测' },
     { label: '模块10: 智能选股7大条件', id: '模块10-智能选股7大条件' },
-    { label: '模块11: 芒格逆向思维检查', id: '模块11-芒格逆向思维检查' },
-    { label: '模块12: 巴菲特-芒格投资检查清单', id: '模块12-巴菲特-芒格投资检查清单' },
+    { label: '模块11: 逆向思维检查', id: '模块11-逆向思维检查' },
+    { label: '模块12: 投资检查清单', id: '模块12-投资检查清单' },
     { label: '模块13: 社交媒体情绪监控', id: '模块13-社交媒体情绪监控' },
     { label: '模块14: 综合投资建议', id: '模块14-综合投资建议' },
     { label: '模块15: 结论与附录', id: '模块15-结论与附录' },
@@ -1693,6 +1696,25 @@ function App() {
     }
   }
 
+  const handleRecommendComparables = async () => {
+    if (!selectedStock) return
+    setCompRecommending(true)
+    try {
+      const result = await RecommendComparables(selectedStock.code)
+      setCompRecommendations(result || [])
+    } catch (e) {
+      console.error('推荐可比公司失败:', e)
+    } finally {
+      setCompRecommending(false)
+    }
+  }
+
+  const handleAddRecommendedComparable = (symbol: string) => {
+    if (comparables.includes(symbol) || comparables.length >= 7) return
+    setComparables((prev) => [...prev, symbol])
+    setCompRecommendations((prev) => prev.filter((r) => r.symbol !== symbol))
+  }
+
   const handleAnalyzeWithComparables = async () => {
     if (!selectedStock || comparables.length === 0) return
     setAnalyzing(true)
@@ -1902,20 +1924,66 @@ function App() {
         </span>
       )
     },
-    div({ className, children, ...props }: any) {
-      const code = selectedStock?.code || ''
-      const name = selectedStock?.name || ''
-      if (className === 'chart-unified' && code) {
-        return <UnifiedChart code={code} quote={quote || undefined} />
+    code({ className, children, ...props }: any) {
+      const text = String(children || '')
+      const lang = className?.replace('language-', '') || ''
+      const stockCode = selectedStock?.code || ''
+      const stockName = selectedStock?.name || ''
+      // 图表占位代码块（fenced code block，有 language-xxx className）
+      if (lang === 'chart-unified' && stockCode) {
+        return <UnifiedChart code={stockCode} quote={quote || undefined} />
       }
-      if (className === 'chart-financial-trend' && code) {
-        return <FinancialTrendChart code={code} name={name} />
+      if (lang === 'chart-financial-trend' && stockCode) {
+        return <FinancialTrendChart code={stockCode} name={stockName} />
+      }
+      // 政策信号强度 inline code: signal:3（inline code 没有 className）
+      if (!className && text.startsWith('signal:')) {
+        const level = parseInt(text.replace('signal:', ''), 10)
+        if (!isNaN(level) && level >= 1 && level <= 5) {
+          return (
+            <span style={{ display: 'inline-flex', alignItems: 'flex-end', gap: '2px', height: '14px', marginLeft: '4px' }}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <span
+                  key={i}
+                  style={{
+                    width: '3px',
+                    height: `${4 + i * 2}px`,
+                    borderRadius: '1px',
+                    backgroundColor: i <= level ? '#22c55e' : '#e2e8f0',
+                    opacity: i <= level ? 1 : 0.4,
+                  }}
+                />
+              ))}
+            </span>
+          )
+        }
       }
       return (
-        <div className={className} {...props}>
+        <code className={className} {...props}>
           {children}
-        </div>
+        </code>
       )
+    },
+    pre({ children }: any) {
+      // 检测是否为图表占位代码块，避免被 <pre> 包裹导致样式异常
+      const child = children
+      if (child && child.props && child.props.className) {
+        const lang = String(child.props.className).replace('language-', '')
+        if (lang === 'chart-unified' || lang === 'chart-financial-trend') {
+          return <>{children}</>
+        }
+      }
+      return <pre>{children}</pre>
+    },
+    a({ href, children, ...props }: any) {
+      if (href === '#fetch-activity') {
+        return (
+          <a href="#fetch-activity" onClick={(e: React.MouseEvent) => { e.preventDefault(); handleFetchMissingActivity() }} {...props}>
+            {children}
+          </a>
+        )
+      }
+      return <a href={href} {...props}>{children}</a>
     },
     // 为模块标题添加复制按钮（仅 h1 级别的模块标题）
     h1({ children, id, ...props }: any) {
@@ -2983,6 +3051,96 @@ function App() {
               </Collapsible>
             )}
 
+            {/* 与上次分析对比 */}
+            {(() => {
+              const diff = (currentSnapshot as any)?.diff
+              if (!diff || !diff.hasPrevious) return null
+              return (
+                <Collapsible title="📈 与上次分析对比">
+                  <div style={{ marginTop: 0, marginBottom: 0, fontSize: 12 }}>
+                    <div style={{ color: '#94a3b8', marginBottom: 6, fontSize: 11 }}>
+                      上次分析：{diff.previousTime}
+                    </div>
+
+                    {/* 评分变化 */}
+                    {diff.scoreChange !== 0 && (
+                      <div style={{
+                        marginBottom: 8,
+                        padding: '6px 8px',
+                        borderRadius: 4,
+                        background: diff.scoreChange > 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                        color: diff.scoreChange > 0 ? '#4ade80' : '#f87171',
+                        fontWeight: 600,
+                      }}>
+                        综合评分 {diff.scoreChange > 0 ? '↑' : '↓'} {Math.abs(diff.scoreChange).toFixed(0)} 分
+                        {diff.gradeChanged ? `（等级 ${diff.previousGrade} → ${diff.currentGrade}）` : `（等级维持 ${diff.currentGrade}）`}
+                      </div>
+                    )}
+
+                    {/* 风险变化 */}
+                    {(diff.newFlags?.length > 0 || diff.resolvedFlags?.length > 0) && (
+                      <div style={{ marginBottom: 8 }}>
+                        {diff.newFlags?.length > 0 && (
+                          <div style={{ marginBottom: 4 }}>
+                            <span style={{ color: '#f87171', fontWeight: 600 }}>🆕 新增风险（{diff.newFlags.length}项）</span>
+                            {diff.newFlags.map((f: any, i: number) => (
+                              <div key={`nf-${i}`} style={{ paddingLeft: 16, color: '#fca5a5', fontSize: 11, marginTop: 2 }}>
+                                {f.level === 'high' ? '🔴' : '🟡'} {f.format}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {diff.resolvedFlags?.length > 0 && (
+                          <div>
+                            <span style={{ color: '#4ade80', fontWeight: 600 }}>✅ 解除风险（{diff.resolvedFlags.length}项）</span>
+                            {diff.resolvedFlags.map((f: any, i: number) => (
+                              <div key={`rf-${i}`} style={{ paddingLeft: 16, color: '#86efac', fontSize: 11, marginTop: 2 }}>
+                                {f.format}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 关键指标变化 */}
+                    {diff.keyMetricChanges?.length > 0 && (
+                      <div>
+                        <div style={{ color: '#cbd5e1', fontWeight: 600, marginBottom: 4 }}>关键指标变化</div>
+                        <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ color: '#94a3b8', borderBottom: '1px solid rgba(148,163,184,0.2)' }}>
+                              <th style={{ textAlign: 'left', padding: '2px 4px' }}>指标</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>上次</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>本次</th>
+                              <th style={{ textAlign: 'right', padding: '2px 4px' }}>变化</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {diff.keyMetricChanges.map((m: any, i: number) => (
+                              <tr key={`mc-${i}`} style={{ borderBottom: '1px solid rgba(148,163,184,0.05)' }}>
+                                <td style={{ padding: '2px 4px', color: '#e2e8f0' }}>{m.name}</td>
+                                <td style={{ textAlign: 'right', padding: '2px 4px', color: '#94a3b8' }}>{m.previous.toFixed(2)}</td>
+                                <td style={{ textAlign: 'right', padding: '2px 4px', color: '#e2e8f0' }}>{m.current.toFixed(2)}</td>
+                                <td style={{
+                                  textAlign: 'right', padding: '2px 4px',
+                                  color: m.delta > 0 ? '#4ade80' : m.delta < 0 ? '#f87171' : '#94a3b8',
+                                  fontWeight: m.significant ? 600 : 400,
+                                }}>
+                                  {m.delta > 0 ? '+' : ''}{m.delta.toFixed(2)}
+                                  {m.significant ? (m.delta > 0 ? ' 🟢' : ' 🔴') : ''}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </Collapsible>
+              )
+            })()}
+
             {selectedStock && (
               <Collapsible title="📊 行业对比雷达">
                 <div className="risk-radar-collapsible-body" style={{ marginTop: 0, marginBottom: 0 }}>
@@ -3060,6 +3218,57 @@ function App() {
                           >
                             ×
                           </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {/* 自动推荐 */}
+                <div style={{ marginTop: 8, marginBottom: 4 }}>
+                  <button
+                    className="btn-text"
+                    onClick={handleRecommendComparables}
+                    disabled={compRecommending}
+                    style={{ fontSize: 11, color: '#60a5fa' }}
+                  >
+                    {compRecommending ? '推荐中...' : '🔍 自动推荐可比公司'}
+                  </button>
+                </div>
+
+                {compRecommendations.length > 0 && (
+                  <div className="cp-recommendations" style={{ marginTop: 4, marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>推荐结果（点击添加）：</div>
+                    {compRecommendations.map((r) => {
+                      const info = STOCKS.find((s) => s.code === r.symbol)
+                      return (
+                        <div
+                          key={r.symbol}
+                          className="cp-rec-item"
+                          onClick={() => handleAddRecommendedComparable(r.symbol)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '4px 6px',
+                            borderRadius: 4,
+                            background: 'rgba(59,130,246,0.08)',
+                            marginBottom: 4,
+                            cursor: 'pointer',
+                            fontSize: 11,
+                          }}
+                        >
+                          <div>
+                            <span style={{ color: '#e2e8f0', fontWeight: 600 }}>{info?.name || r.name || r.symbol}</span>
+                            <span style={{ color: '#64748b', marginLeft: 4 }}>{r.symbol}</span>
+                            <span style={{ color: '#fbbf24', marginLeft: 6 }}>相似度 {r.score.toFixed(0)}</span>
+                            {r.dataQuality === 'high' ? (
+                              <span style={{ color: '#4ade80', marginLeft: 4 }}>✅</span>
+                            ) : (
+                              <span style={{ color: '#fbbf24', marginLeft: 4 }}>⚠️</span>
+                            )}
+                          </div>
+                          <span style={{ color: '#60a5fa', fontSize: 16 }}>+</span>
                         </div>
                       )
                     })}
@@ -3596,7 +3805,7 @@ function App() {
                 handleFetchMissingActivity()
               }
             }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug, rehypeRaw]} components={markdownComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSlug]} components={markdownComponents}>
                 {displayContent}
               </ReactMarkdown>
             </div>

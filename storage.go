@@ -67,7 +67,7 @@ func (s *Storage) SaveWatchlist(list []WatchlistItem) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // EnsureStockDataDir 确保某只股票的数据目录存在
@@ -303,7 +303,7 @@ func (s *Storage) SaveAnalysisCache(symbol, dataHash, comparablesHash string) er
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // LoadAnalysisCache 读取分析缓存
@@ -770,23 +770,134 @@ func (s *Storage) LoadRIMCache(symbol string) (*downloader.RIMExternalData, erro
 	return wrapper.Data, nil
 }
 
-// SaveSnapshot 保存分析报告快照（用于前端亮点与风险恢复）
+// SnapshotInfo 快照元数据
+type SnapshotInfo struct {
+	Timestamp string `json:"timestamp"`
+	DateTime  string `json:"date_time"`
+}
+
+// SaveSnapshot 保存分析报告快照（保留最近10份历史）
 func (s *Storage) SaveSnapshot(symbol string, report *analyzer.AnalysisReport) error {
-	dir := filepath.Join(s.dataDir, "snapshots")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	historyDir := filepath.Join(s.dataDir, "snapshots", symbol)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, symbol+".json")
+	timestamp := time.Now().Format("20060102_150405")
+	path := filepath.Join(historyDir, timestamp+".json")
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	// 同时更新 latest.json 快捷访问
+	latestPath := filepath.Join(historyDir, "latest.json")
+	if err := os.WriteFile(latestPath, data, 0600); err != nil {
+		return err
+	}
+	return s.cleanupOldSnapshots(symbol)
+}
+
+// cleanupOldSnapshots 清理旧快照，保留最近 10 份
+func (s *Storage) cleanupOldSnapshots(symbol string) error {
+	historyDir := filepath.Join(s.dataDir, "snapshots", symbol)
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var files []os.DirEntry
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "latest.json" {
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".json") {
+			files = append(files, entry)
+		}
+	}
+	if len(files) <= 10 {
+		return nil
+	}
+	// 按文件名排序（时间戳格式 20060102_150405，字典序即时间序）
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Name() < files[j].Name()
+	})
+	// 删除最旧的
+	for i := 0; i < len(files)-10; i++ {
+		if err := os.Remove(filepath.Join(historyDir, files[i].Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListSnapshotHistory 列出某只股票的分析快照历史
+func (s *Storage) ListSnapshotHistory(symbol string) ([]SnapshotInfo, error) {
+	historyDir := filepath.Join(s.dataDir, "snapshots", symbol)
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var infos []SnapshotInfo
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "latest.json" {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		// 解析时间戳 20060102_150405
+		ts := strings.TrimSuffix(name, ".json")
+		if t, err := time.ParseInLocation("20060102_150405", ts, time.Local); err == nil {
+			infos = append(infos, SnapshotInfo{
+				Timestamp: ts,
+				DateTime:  t.Format("2006-01-02 15:04:05"),
+			})
+		}
+	}
+	// 降序排列（最新的在前）
+	sort.Slice(infos, func(i, j int) bool {
+		return infos[i].Timestamp > infos[j].Timestamp
+	})
+	return infos, nil
+}
+
+// LoadSnapshotByTime 按时间戳加载指定快照
+func (s *Storage) LoadSnapshotByTime(symbol string, timestamp string) (*analyzer.AnalysisReport, error) {
+	path := filepath.Join(s.dataDir, "snapshots", symbol, timestamp+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var report analyzer.AnalysisReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil, fmt.Errorf("解析快照失败: %w", err)
+	}
+	return &report, nil
 }
 
 // LoadSnapshot 加载分析报告快照
 func (s *Storage) LoadSnapshot(symbol string) (*analyzer.AnalysisReport, error) {
-	path := filepath.Join(s.dataDir, "snapshots", symbol+".json")
+	// 兼容旧版单文件结构
+	oldPath := filepath.Join(s.dataDir, "snapshots", symbol+".json")
+	if data, err := os.ReadFile(oldPath); err == nil {
+		var report analyzer.AnalysisReport
+		if err := json.Unmarshal(data, &report); err == nil {
+			return &report, nil
+		}
+	}
+	// 新版目录结构
+	path := filepath.Join(s.dataDir, "snapshots", symbol, "latest.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -803,8 +914,12 @@ func (s *Storage) LoadSnapshot(symbol string) (*analyzer.AnalysisReport, error) 
 
 // DeleteSnapshot 删除分析报告快照
 func (s *Storage) DeleteSnapshot(symbol string) error {
-	path := filepath.Join(s.dataDir, "snapshots", symbol+".json")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	// 删除旧版单文件
+	oldPath := filepath.Join(s.dataDir, "snapshots", symbol+".json")
+	_ = os.Remove(oldPath)
+	// 删除新版目录
+	dir := filepath.Join(s.dataDir, "snapshots", symbol)
+	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
@@ -977,7 +1092,7 @@ func (s *Storage) SaveAppConfig(cfg *AppConfig) error {
 	if err != nil {
 		return fmt.Errorf("序列化 App 配置失败: %w", err)
 	}
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 // ========== SFL 配置存储 ==========

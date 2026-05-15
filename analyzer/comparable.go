@@ -183,12 +183,12 @@ func loadComparableFinancialData(baseDir, symbol string) (*FinancialData, error)
 		return nil, fmt.Errorf("load cash_flow.json: %w", err)
 	}
 
-	years := extractYearsFloat(bs)
+	years := extractYearsOnly(bs)
 	if len(years) == 0 {
-		years = extractYearsFloat(is)
+		years = extractYearsOnly(is)
 	}
 	if len(years) == 0 {
-		years = extractYearsFloat(cf)
+		years = extractYearsOnly(cf)
 	}
 
 	fd := &FinancialData{

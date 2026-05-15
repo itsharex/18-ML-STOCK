@@ -12,12 +12,14 @@ import (
 // FinancialData 包含标准化的三张财务报表数据
 type FinancialData struct {
 	Symbol          string
-	Years           []string
+	Years           []string                     // 年报期间（降序）
+	Quarters        []string                     // 所有期间含季报（降序）
 	BalanceSheet    map[string]map[string]float64
 	IncomeStatement map[string]map[string]float64
 	CashFlow        map[string]map[string]float64
-	Extras          map[string]float64 // 非财务风险爬虫数据（股权质押、问询函、减持等）
-	QualityWarnings []string           // 数据质量警告（供报告展示）
+	Extras          map[string]float64           // 非财务风险爬虫数据（股权质押、问询函、减持等）
+	QualityWarnings []string                     // 数据质量警告（供报告展示）
+	AuditOpinions   map[string]*AuditOpinion     // 年份 -> 审计意见
 }
 
 // LoadFinancialData 从 StockFinLens 存储目录加载某股票的财务报表 JSON
@@ -37,17 +39,26 @@ func LoadFinancialData(baseDir, symbol string) (*FinancialData, error) {
 		return nil, fmt.Errorf("load cash_flow.json: %w", err)
 	}
 
-	years := extractYearsFloat(bs)
+	years := extractYearsOnly(bs)
 	if len(years) == 0 {
-		years = extractYearsFloat(is)
+		years = extractYearsOnly(is)
 	}
 	if len(years) == 0 {
-		years = extractYearsFloat(cf)
+		years = extractYearsOnly(cf)
+	}
+
+	quarters := extractPeriods(bs)
+	if len(quarters) == 0 {
+		quarters = extractPeriods(is)
+	}
+	if len(quarters) == 0 {
+		quarters = extractPeriods(cf)
 	}
 
 	fd := &FinancialData{
 		Symbol:          symbol,
 		Years:           years,
+		Quarters:        quarters,
 		BalanceSheet:    bs,
 		IncomeStatement: is,
 		CashFlow:        cf,
@@ -134,12 +145,27 @@ func loadFloatJSONFile(path string) (map[string]map[string]float64, error) {
 	return result, nil
 }
 
-func extractYearsFloat(data map[string]map[string]float64) []string {
+// extractPeriods 提取所有期间（年报+季报），返回降序排列的日期列表
+func extractPeriods(data map[string]map[string]float64) []string {
+	periodSet := make(map[string]struct{})
+	for _, row := range data {
+		for period := range row {
+			periodSet[period] = struct{}{}
+		}
+	}
+	periods := make([]string, 0, len(periodSet))
+	for p := range periodSet {
+		periods = append(periods, p)
+	}
+	sortPeriodsDesc(periods)
+	return periods
+}
+
+// extractYearsOnly 只提取年报期间（12-31结尾或4位年份），返回降序排列
+func extractYearsOnly(data map[string]map[string]float64) []string {
 	yearSet := make(map[string]struct{})
 	for _, row := range data {
 		for year := range row {
-			// 只保留年报数据（12-31结尾），过滤掉季报（03-31, 06-30, 09-30）
-			// 避免季报和年报混用导致同比计算失真（如Q1单季 vs 全年）
 			if strings.HasSuffix(year, "-12-31") || len(year) == 4 {
 				yearSet[year] = struct{}{}
 			}
@@ -149,14 +175,19 @@ func extractYearsFloat(data map[string]map[string]float64) []string {
 	for y := range yearSet {
 		years = append(years, y)
 	}
-	for i := 0; i < len(years); i++ {
-		for j := i + 1; j < len(years); j++ {
-			if years[i] < years[j] {
-				years[i], years[j] = years[j], years[i]
+	sortPeriodsDesc(years)
+	return years
+}
+
+// sortPeriodsDesc 按日期降序排列（简单的字符串排序，因为格式统一为 YYYY-MM-DD 或 YYYY）
+func sortPeriodsDesc(periods []string) {
+	for i := 0; i < len(periods); i++ {
+		for j := i + 1; j < len(periods); j++ {
+			if periods[i] < periods[j] {
+				periods[i], periods[j] = periods[j], periods[i]
 			}
 		}
 	}
-	return years
 }
 
 // GetValueOrZero 从 data[account][year] 中读取 float64，缺失时返回 0

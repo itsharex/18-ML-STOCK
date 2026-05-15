@@ -1,5 +1,46 @@
 # Changelog
 
+## [v1.3.37] - 2026-05-15
+
+### 新增 (Features)
+- **季度/TTM 滚动数据分析**
+  - 财报下载器现在同时下载季报数据（年报+季报），TTM 计算包含最新季度，时效性更强
+  - 新增「季度滚动预警」模块（3.3）：检测营收/净利润/毛利率的环比与同比变化
+  - 新增「TTM（滚动12个月）数据」模块（3.4）：拆分为经营规模、盈利能力、现金流质量三个子表格
+- **与上次分析对比（Diff）**
+  - 同一只股票第二次分析时自动显示「模块1.3: 与上次分析对比」
+  - 展示评分变化、风险新增/解除/持续、关键指标变动
+- **审计意见自动解析**
+  - Python 脚本从巨潮资讯网公告标题推断审计意见类型
+  - 非标意见自动触发一票否决
+- **可比公司自动推荐**
+  - 基于行业、市值、关键词、ROE、毛利率五维度相似度评分
+- **ML 预测置信度**
+  - 新增高/中/低置信度标识，报告中以 🟢🟡🔴 徽章展示
+
+### 修复 (Fixes)
+- **风险爬虫 key 不匹配**：`app.go` 与 `risk_alert.go` 统一为 snake_case，确保股权质押/问询函/减持数据正确显示
+- **nil 指针 panic**：`GetWatchlistActivity` 中 `quote == nil` 时安全跳过日志打印
+- **goroutine 嵌套 race**：`moneyflowData` 从 `sentimentData` 内部提升到顶层，避免 `wgNet.Wait()` 提前返回
+- **审计意见误触发一票否决**：`isStandard` fallback 从字符串 `"待确认"` 改为 `true`（bool）
+- **XSS 向量**：移除 `rehype-raw`，HTML 标签改为 Markdown 代码块或 Unicode 字符
+- **SVG 信号条显示为代码**：改为前端自定义渲染的绿色信号格图标
+- **配置/Token 文件权限**：从 `0644` 收紧为 `0600`
+
+### 优化 (Improvements)
+- **报告结构重组**
+  - 季度/TTM 从模块1.5/1.6 移至模块3（与年度数据放在一起）
+  - 模块11 标题简化为「逆向思维检查」，模块12 简化为「投资检查清单」
+  - 移除模块1.1 中重复的 A-Score 行
+- **文件拆分**：`report.go` 拆为 3 个文件，`app.go` 拆出 `app_analysis.go`
+- **前端测试**：新增 `RiskBadge` / `RiskAlertBanner` 组件测试，总测试数 4→14
+- **回归脚本**：`scripts/run-regression.sh` 支持 `quick`/`full` 模式
+
+### macOS
+- 应用显示名称改为「财报透镜」（`CFBundleDisplayName` + `CFBundleName`）
+- `.app` 包文件名保持 `stockfinlens.app` 不变
+
+
 ## [v1.3.36] - 2026-05-13
 
 ### 新增 (Features)

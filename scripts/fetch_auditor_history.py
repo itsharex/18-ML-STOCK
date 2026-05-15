@@ -265,10 +265,81 @@ def fetch_auditor_history(symbol: str):
         }
 
 
+# 审计意见类型关键词映射
+OPINION_KEYWORDS = [
+    ("否定意见", "否定意见"),
+    ("无法表示意见", "无法表示意见"),
+    ("保留意见", "保留意见"),
+    ("强调事项", "带强调事项段的无保留意见"),
+    ("关键审计事项", "标准无保留意见"),  # 关键审计事项属于标准意见的一部分
+]
+
+
+def extract_opinion_from_title(title: str) -> str:
+    """从公告标题中提取审计意见类型"""
+    for kw, opinion in OPINION_KEYWORDS:
+        if kw in title:
+            return opinion
+    # 如果标题只含"审计报告"而无上述关键词，推测为标准无保留
+    if "审计报告" in title:
+        return "标准无保留意见（推测）"
+    return ""
+
+
+def fetch_audit_opinions(symbol: str):
+    """获取股票历年审计意见（基于审计报告公告标题推断）"""
+    try:
+        # 查询近5年的审计报告公告
+        start = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
+        announcements = query_announcements(
+            symbol,
+            search_key="审计报告",
+            start_date=start,
+            page_size=50,
+        )
+
+        if announcements and "error" in announcements[0]:
+            return []
+
+        opinions = []
+        seen_years = set()
+        # 按日期降序，取每年最新的审计报告
+        sorted_anns = sorted(announcements, key=lambda x: x.get("announcementDate", ""), reverse=True)
+        for a in sorted_anns:
+            title = a.get("announcementTitle", "")
+            date = a.get("announcementDate", "")
+            # 只处理年度审计报告（排除半年报、季报审计）
+            if "半年" in title or "季度" in title or "季度" in title or "内部控制" in title:
+                continue
+            year = extract_year_from_title(title) or date[:4]
+            if not year or year in seen_years:
+                continue
+            opinion = extract_opinion_from_title(title)
+            if not opinion:
+                continue
+            seen_years.add(year)
+            # 提取审计机构名称
+            auditor = extract_auditor_from_title(title)
+            opinions.append({
+                "year": year,
+                "opinion": opinion,
+                "auditor": auditor,
+                "is_standard": "标准无保留" in opinion and "推测" not in opinion,
+                "needs_review": "推测" in opinion,
+                "announcement_date": date,
+                "raw_title": title,
+            })
+        return opinions
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
 def main():
     req = json.load(sys.stdin)
     symbol = req.get("symbol", "")
     result = fetch_auditor_history(symbol)
+    # 同时获取审计意见
+    result["audit_opinions"] = fetch_audit_opinions(symbol)
     print(json.dumps(result, ensure_ascii=False))
 
 

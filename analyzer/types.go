@@ -43,6 +43,7 @@ type AnalysisReport struct {
 	StepResults     []StepResult          `json:"stepResults"`
 	PassSummary     map[string][]PassItem `json:"passSummary"`
 	Score           map[string]float64    `json:"score"`
+	ScoreDetails    map[string]*YearScore `json:"scoreDetails,omitempty"` // 完整的年度评分详情
 	OverallGrade    string                `json:"overallGrade"`
 	MarkdownContent string                `json:"markdownContent"`
 	RIM             *RIMData              `json:"rim,omitempty"`
@@ -50,6 +51,9 @@ type AnalysisReport struct {
 	Risks           []string              `json:"risks"`
 	RiskAlert       *RiskAlertSummary     `json:"riskAlert,omitempty"`
 	QualityWarnings []string              `json:"qualityWarnings,omitempty"`
+	Diff            *AnalysisDiff         `json:"diff,omitempty"` // 与上次分析的差异
+	QuarterlyAlert  *QuarterlyAlert      `json:"quarterlyAlert,omitempty"`
+	TTMMetrics      *TTMMetrics          `json:"ttmMetrics,omitempty"`
 }
 
 // PassItem 单一年度的达标项
@@ -113,6 +117,8 @@ type MLPredictionData struct {
 	EngineD   *MLDRiskPrediction     `json:"engine_d,omitempty"`
 	Summary   *MLSummary             `json:"summary,omitempty"`
 	MLError   string                 `json:"ml_error,omitempty"` // Python 推理失败的错误信息
+	// Confidence 模型输入完整度/置信等级：high（数据充分）/ medium（部分默认值）/ low（大量缺失）
+	Confidence string `json:"confidence,omitempty"`
 }
 
 // RIMData 剩余收益模型数据
@@ -197,6 +203,17 @@ type ExternalRiskData struct {
 	Error               string   `json:"error,omitempty"`     // 数据获取错误
 }
 
+// AuditOpinion 单年度审计意见
+type AuditOpinion struct {
+	Year        string   `json:"year"`
+	Opinion     string   `json:"opinion"`
+	Auditor     string   `json:"auditor"`
+	IsStandard  bool     `json:"isStandard"`
+	NeedsReview bool     `json:"needsReview"`
+	Emphasis    []string `json:"emphasis,omitempty"`
+	KeyMatters  []string `json:"keyMatters,omitempty"`
+}
+
 // SensitivityLevel 风险警示敏感度
 type SensitivityLevel string
 
@@ -205,3 +222,28 @@ const (
 	SensitivityStandard SensitivityLevel = "standard" // 标准
 	SensitivityLoose   SensitivityLevel = "loose"   // 宽松
 )
+
+// MetricChange 单指标变化记录
+type MetricChange struct {
+	Name     string  `json:"name"`
+	Previous float64 `json:"previous"`
+	Current  float64 `json:"current"`
+	Delta    float64 `json:"delta"`    // 绝对变化
+	DeltaPct float64 `json:"deltaPct"` // 百分比变化（基点或百分比）
+	Significant bool `json:"significant"` // 是否超过阈值
+}
+
+// AnalysisDiff 两次分析之间的差异摘要
+type AnalysisDiff struct {
+	HasPrevious       bool             `json:"hasPrevious"`
+	PreviousTime      string           `json:"previousTime,omitempty"`
+	CurrentTime       string           `json:"currentTime,omitempty"`
+	ScoreChange       float64          `json:"scoreChange"`       // 总分变化（当前 - 上次）
+	GradeChanged      bool             `json:"gradeChanged"`
+	PreviousGrade     string           `json:"previousGrade,omitempty"`
+	CurrentGrade      string           `json:"currentGrade,omitempty"`
+	NewFlags          []RiskAlertFlag  `json:"newFlags,omitempty"`      // 新增风险
+	ResolvedFlags     []RiskAlertFlag  `json:"resolvedFlags,omitempty"` // 解除的风险
+	PersistentFlags   []RiskAlertFlag  `json:"persistentFlags,omitempty"` // 持续风险
+	KeyMetricChanges  []MetricChange   `json:"keyMetricChanges,omitempty"`
+}

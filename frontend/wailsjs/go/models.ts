@@ -1,5 +1,27 @@
 export namespace analyzer {
 	
+	export class MetricChange {
+	    name: string;
+	    previous: number;
+	    current: number;
+	    delta: number;
+	    deltaPct: number;
+	    significant: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetricChange(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.previous = source["previous"];
+	        this.current = source["current"];
+	        this.delta = source["delta"];
+	        this.deltaPct = source["deltaPct"];
+	        this.significant = source["significant"];
+	    }
+	}
 	export class RiskAlertFlag {
 	    code: string;
 	    name: string;
@@ -23,6 +45,140 @@ export namespace analyzer {
 	        this.source = source["source"];
 	        this.details = source["details"];
 	    }
+	}
+	export class AnalysisDiff {
+	    hasPrevious: boolean;
+	    previousTime?: string;
+	    currentTime?: string;
+	    scoreChange: number;
+	    gradeChanged: boolean;
+	    previousGrade?: string;
+	    currentGrade?: string;
+	    newFlags?: RiskAlertFlag[];
+	    resolvedFlags?: RiskAlertFlag[];
+	    persistentFlags?: RiskAlertFlag[];
+	    keyMetricChanges?: MetricChange[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AnalysisDiff(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hasPrevious = source["hasPrevious"];
+	        this.previousTime = source["previousTime"];
+	        this.currentTime = source["currentTime"];
+	        this.scoreChange = source["scoreChange"];
+	        this.gradeChanged = source["gradeChanged"];
+	        this.previousGrade = source["previousGrade"];
+	        this.currentGrade = source["currentGrade"];
+	        this.newFlags = this.convertValues(source["newFlags"], RiskAlertFlag);
+	        this.resolvedFlags = this.convertValues(source["resolvedFlags"], RiskAlertFlag);
+	        this.persistentFlags = this.convertValues(source["persistentFlags"], RiskAlertFlag);
+	        this.keyMetricChanges = this.convertValues(source["keyMetricChanges"], MetricChange);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TTMMetrics {
+	    hasData: boolean;
+	    revenue: number;
+	    netProfit: number;
+	    operatingCash: number;
+	    roe: number;
+	    netMargin: number;
+	    cashRatio: number;
+	    periodCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TTMMetrics(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hasData = source["hasData"];
+	        this.revenue = source["revenue"];
+	        this.netProfit = source["netProfit"];
+	        this.operatingCash = source["operatingCash"];
+	        this.roe = source["roe"];
+	        this.netMargin = source["netMargin"];
+	        this.cashRatio = source["cashRatio"];
+	        this.periodCount = source["periodCount"];
+	    }
+	}
+	export class QuarterlyAlertItem {
+	    period: string;
+	    metric: string;
+	    current: number;
+	    previous: number;
+	    changePct: number;
+	    level: string;
+	    description: string;
+	    compareType: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new QuarterlyAlertItem(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.period = source["period"];
+	        this.metric = source["metric"];
+	        this.current = source["current"];
+	        this.previous = source["previous"];
+	        this.changePct = source["changePct"];
+	        this.level = source["level"];
+	        this.description = source["description"];
+	        this.compareType = source["compareType"];
+	    }
+	}
+	export class QuarterlyAlert {
+	    hasData: boolean;
+	    items: QuarterlyAlertItem[];
+	
+	    static createFrom(source: any = {}) {
+	        return new QuarterlyAlert(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hasData = source["hasData"];
+	        this.items = this.convertValues(source["items"], QuarterlyAlertItem);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class RiskAlertSummary {
 	    level: string;
@@ -250,6 +406,66 @@ export namespace analyzer {
 		    return a;
 		}
 	}
+	export class Deduction {
+	    StepNum: number;
+	    StepName: string;
+	    Reason: string;
+	    Points: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Deduction(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.StepNum = source["StepNum"];
+	        this.StepName = source["StepName"];
+	        this.Reason = source["Reason"];
+	        this.Points = source["Points"];
+	    }
+	}
+	export class YearScore {
+	    Year: string;
+	    RawScore: number;
+	    MaxScore: number;
+	    Grade: string;
+	    PassCount: number;
+	    FailCount: number;
+	    Deductions: Deduction[];
+	
+	    static createFrom(source: any = {}) {
+	        return new YearScore(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Year = source["Year"];
+	        this.RawScore = source["RawScore"];
+	        this.MaxScore = source["MaxScore"];
+	        this.Grade = source["Grade"];
+	        this.PassCount = source["PassCount"];
+	        this.FailCount = source["FailCount"];
+	        this.Deductions = this.convertValues(source["Deductions"], Deduction);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CalcStep {
 	    desc: string;
 	    expr: string;
@@ -375,6 +591,7 @@ export namespace analyzer {
 	    stepResults: StepResult[];
 	    passSummary: Record<string, Array<PassItem>>;
 	    score: Record<string, number>;
+	    scoreDetails?: Record<string, YearScore>;
 	    overallGrade: string;
 	    markdownContent: string;
 	    rim?: RIMData;
@@ -382,6 +599,9 @@ export namespace analyzer {
 	    risks: string[];
 	    riskAlert?: RiskAlertSummary;
 	    qualityWarnings?: string[];
+	    diff?: AnalysisDiff;
+	    quarterlyAlert?: QuarterlyAlert;
+	    ttmMetrics?: TTMMetrics;
 	
 	    static createFrom(source: any = {}) {
 	        return new AnalysisReport(source);
@@ -395,6 +615,7 @@ export namespace analyzer {
 	        this.stepResults = this.convertValues(source["stepResults"], StepResult);
 	        this.passSummary = this.convertValues(source["passSummary"], Array<PassItem>, true);
 	        this.score = source["score"];
+	        this.scoreDetails = this.convertValues(source["scoreDetails"], YearScore, true);
 	        this.overallGrade = source["overallGrade"];
 	        this.markdownContent = source["markdownContent"];
 	        this.rim = this.convertValues(source["rim"], RIMData);
@@ -402,6 +623,9 @@ export namespace analyzer {
 	        this.risks = source["risks"];
 	        this.riskAlert = this.convertValues(source["riskAlert"], RiskAlertSummary);
 	        this.qualityWarnings = source["qualityWarnings"];
+	        this.diff = this.convertValues(source["diff"], AnalysisDiff);
+	        this.quarterlyAlert = this.convertValues(source["quarterlyAlert"], QuarterlyAlert);
+	        this.ttmMetrics = this.convertValues(source["ttmMetrics"], TTMMetrics);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -423,6 +647,27 @@ export namespace analyzer {
 		}
 	}
 	
+	
+	export class ComparableRecommendation {
+	    symbol: string;
+	    name: string;
+	    score: number;
+	    reasons: string[];
+	    dataQuality: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ComparableRecommendation(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.symbol = source["symbol"];
+	        this.name = source["name"];
+	        this.score = source["score"];
+	        this.reasons = source["reasons"];
+	        this.dataQuality = source["dataQuality"];
+	    }
+	}
 	
 	export class IndustryMetrics {
 	    industry: string;
@@ -459,6 +704,7 @@ export namespace analyzer {
 	    }
 	}
 	
+	
 	export class PassItem {
 	    year: string;
 	    passed: boolean;
@@ -475,6 +721,8 @@ export namespace analyzer {
 	        this.value = source["value"];
 	    }
 	}
+	
+	
 	
 	
 	
@@ -509,6 +757,8 @@ export namespace analyzer {
 	        this.desc = source["desc"];
 	    }
 	}
+	
+	
 
 }
 
@@ -1146,6 +1396,20 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.success = source["success"];
 	        this.message = source["message"];
+	    }
+	}
+	export class SnapshotInfo {
+	    timestamp: string;
+	    date_time: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SnapshotInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.timestamp = source["timestamp"];
+	        this.date_time = source["date_time"];
 	    }
 	}
 	export class StockInfo {

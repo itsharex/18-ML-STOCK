@@ -137,7 +137,7 @@ pip install akshare
 
 ### 依赖要求
 
-- Go >= 1.22
+- Go >= 1.25.0
 - Node.js >= 18  
 - Python 3.10+
 - Wails CLI >= v2.12

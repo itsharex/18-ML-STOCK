@@ -10,7 +10,7 @@
 **StockFinLens（股票财报透镜）** 是一款基于 Wails v2 的跨平台桌面股票财报透视分析工具，支持 A 股与港股。它通过多层分析引擎（财报透镜财务透视、A-Score 风险评分、可比公司横向对比、ML 三引擎预测、RIM 估值、技术形态与交易活跃度分析等）生成深度 Markdown 分析报告。
 
 - **模块名**: `github.com/liusaipu/stockfinlens`
-- **当前版本**: `1.3.29`（见 `wails.json` 的 `info.productVersion` 与 `frontend/src/Settings.tsx` 的 `const version`）
+- **当前版本**: `1.3.37`（见 `wails.json` 的 `info.productVersion` 与 `frontend/src/Settings.tsx` 的 `const version`）
 - **本地数据目录**: `~/.config/stock-analyzer/`
 
 ## 技术栈

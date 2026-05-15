@@ -39,6 +39,15 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 	if len(data.Years) == 0 {
 		return nil, fmt.Errorf("no financial data available for %s", symbol)
 	}
+	// 将传入的 extras 回填到 data.Extras，供 step8RiskAnalysis 等使用
+	if len(extras) > 0 {
+		if data.Extras == nil {
+			data.Extras = make(map[string]float64)
+		}
+		for k, v := range extras {
+			data.Extras[k] = v
+		}
+	}
 
 	steps := []StepResult{
 		step1Audit(data),
@@ -113,7 +122,11 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 	// 构建风险警示摘要
 	riskAlert := BuildRiskAlertSummary(steps, extras, data.Years, external, sensitivity)
 
-	md := GenerateMarkdown(symbol, data.Years, steps, scores, comp, industry, quote, sentiment, policy, technical, activity, moneyflow, ml, rim, riskAlert, data.QualityWarnings)
+	// 季度滚动预警 + TTM
+	quarterlyAlert := BuildQuarterlyAlert(data)
+	ttmMetrics := BuildTTMMetrics(data)
+
+	md := GenerateMarkdown(symbol, data.Years, steps, scores, comp, industry, quote, sentiment, policy, technical, activity, moneyflow, ml, rim, riskAlert, data.QualityWarnings, nil, quarterlyAlert, ttmMetrics)
 
 	hr := ExtractHighlightsAndRisks(steps, data.Years)
 
@@ -124,6 +137,7 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 		StepResults:     steps,
 		PassSummary:     passSummary,
 		Score:           scoreMap,
+		ScoreDetails:    scores,
 		OverallGrade:    overallGrade,
 		MarkdownContent: md,
 		RIM:             rim,
@@ -131,6 +145,8 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 		Risks:           hr.Risks,
 		RiskAlert:       riskAlert,
 		QualityWarnings: data.QualityWarnings,
+		QuarterlyAlert:  quarterlyAlert,
+		TTMMetrics:      ttmMetrics,
 	}
 	return report, nil
 }

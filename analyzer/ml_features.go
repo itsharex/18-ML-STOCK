@@ -15,7 +15,7 @@ type MLKlineData struct {
 	Amount float64
 }
 
-// BuildMLEngineBInput 从 FinancialData 提取最近 8 个季度的财务特征序列
+// BuildMLEngineBInput 从 FinancialData 提取最近 8 个年度的财务特征序列
 // 返回固定8个时间步的序列，如果数据不足8年，用零值填充
 func BuildMLEngineBInput(data *FinancialData) [][]float64 {
 	if data == nil || len(data.Years) == 0 {
@@ -201,7 +201,8 @@ func zscore(values []float64) []float64 {
 
 // BuildMLEngineDInput 构建 Engine-D 25维风险特征向量
 // 特征顺序：财务14维 + 市场6维 + 非财务5维
-func BuildMLEngineDInput(data *FinancialData) []float64 {
+// quote 为实时行情数据，用于填充市场指标；为 nil 时使用默认值
+func BuildMLEngineDInput(data *FinancialData, quote *QuoteData) []float64 {
 	if data == nil || len(data.Years) == 0 {
 		return nil
 	}
@@ -315,13 +316,27 @@ func BuildMLEngineDInput(data *FinancialData) []float64 {
 	avgReceivables := receivables
 	receivableTurnover := safeDivide(revenue, avgReceivables)
 
-	// 市场指标 (6维) - 使用默认值，实际应从行情数据获取
+	// 市场指标 (6维) - 优先从行情数据获取，缺失时使用默认值
 	peTTM := 25.0
 	pb := 2.5
 	marketCap := totalAssets / 1e8 // 简化估算
 	turnover20d := 0.03
 	volatility60d := 0.3
 	maxDrawdown1y := -0.15
+	if quote != nil {
+		if quote.PE > 0 {
+			peTTM = quote.PE
+		}
+		if quote.PB > 0 {
+			pb = quote.PB
+		}
+		if quote.MarketCap > 0 {
+			marketCap = quote.MarketCap / 1e8
+		}
+		if quote.TurnoverRate > 0 {
+			turnover20d = quote.TurnoverRate
+		}
+	}
 
 	// 非财务指标 (5维) - 使用默认值
 	pledgeRatio := 0.15

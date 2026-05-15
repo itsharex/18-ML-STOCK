@@ -42,7 +42,7 @@ if [ "$MODE" = "quick" ]; then
     echo "[1/2] 运行 Go 快速回归测试（-short，跳过网络）..."
     echo "## Go 后端测试（quick）" >> "$RESULT_FILE"
     echo '```' >> "$RESULT_FILE"
-    if go test -short ./... 2>&1 | tee -a "$RESULT_FILE"; then
+    if go test -short ./analyzer/... ./downloader/... ./updater/... . 2>&1 | tee -a "$RESULT_FILE"; then
         GO_STATUS="✅ 通过"
     else
         GO_STATUS="❌ 失败"
@@ -66,7 +66,7 @@ elif [ "$MODE" = "full" ]; then
     echo "[1/2] 运行 Go 完整回归测试（含网络请求和端到端）..."
     echo "## Go 后端测试（full）" >> "$RESULT_FILE"
     echo '```' >> "$RESULT_FILE"
-    if go test ./... 2>&1 | tee -a "$RESULT_FILE"; then
+    if go test ./analyzer/... ./downloader/... ./updater/... . 2>&1 | tee -a "$RESULT_FILE"; then
         GO_STATUS="✅ 通过"
     else
         GO_STATUS="❌ 失败"

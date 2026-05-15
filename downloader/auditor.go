@@ -20,12 +20,25 @@ type AuditorChangeDetail struct {
 	RawTitle             string `json:"raw_title"`
 }
 
+// AuditOpinion 单年度审计意见
+type AuditOpinion struct {
+	Year             string `json:"year"`
+	Opinion          string `json:"opinion"`
+	Auditor          string `json:"auditor"`
+	IsStandard       bool   `json:"is_standard"`
+	NeedsReview      bool   `json:"needs_review"`
+	AnnouncementDate string `json:"announcement_date"`
+	RawTitle         string `json:"raw_title"`
+	Error            string `json:"error,omitempty"`
+}
+
 // AuditorHistory 审计机构历史信息
 type AuditorHistory struct {
 	AuditorName     string                `json:"auditor_name"`
 	AuditorChanged  bool                  `json:"auditor_changed"`
 	History         []string              `json:"history"`
 	ChangeDetails   []AuditorChangeDetail `json:"change_details"`
+	AuditOpinions   []AuditOpinion        `json:"audit_opinions"`
 	Error           string                `json:"error,omitempty"`
 }
 

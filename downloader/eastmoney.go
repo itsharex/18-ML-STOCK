@@ -89,19 +89,21 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 		return nil, fmt.Errorf("无法确定现金流量表类型: %w\n可能原因: 网络连接问题或股票代码不存在", err)
 	}
 
-	// 2. 获取年报日期列表
-	dates, err := getAnnualReportDates(code, maxYears)
+	// 2. 获取所有报告日期（年报+季报）
+	allDates, err := getReportDates(code, maxYears)
 	if err != nil {
-		return nil, fmt.Errorf("获取年报日期列表失败: %w\n可能原因: 网络连接不稳定或该股票暂无财务数据", err)
+		return nil, fmt.Errorf("获取报告日期列表失败: %w\n可能原因: 网络连接不稳定或该股票暂无财务数据", err)
 	}
-	if len(dates) == 0 {
-		return nil, fmt.Errorf("未找到任何年报数据，该股票可能尚未发布年报")
+	if len(allDates) == 0 {
+		return nil, fmt.Errorf("未找到任何财报数据，该股票可能尚未发布财报")
 	}
+	// Years 只保留年报（供年度分析使用）
+	annualDates := filterAnnualDates(allDates)
 
-	// 3. 并发下载三张表
+	// 3. 并发下载三张表（遍历所有报告期，包括季报）
 	result := &FinancialReportData{
 		Symbol:          code,
-		Years:           dates,
+		Years:           annualDates,
 		BalanceSheet:    make(map[string]map[string]float64),
 		IncomeStatement: make(map[string]map[string]float64),
 		CashFlow:        make(map[string]map[string]float64),
@@ -112,7 +114,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 	var errs []string
 	successCount := 0
 
-	for _, date := range dates {
+	for _, date := range allDates {
 		// balance sheet
 		wg.Add(1)
 		go func(d string) {
@@ -196,10 +198,11 @@ func FetchCashFlowDividendFromEastMoney(market, code string, maxYears int) (map[
 	}
 
 	// 2. 获取年报日期列表
-	dates, err := getAnnualReportDates(code, maxYears)
+	allDates, err := getReportDates(code, maxYears)
 	if err != nil {
-		return nil, fmt.Errorf("获取年报日期失败: %w", err)
+		return nil, fmt.Errorf("获取报告日期失败: %w", err)
 	}
+	dates := filterAnnualDates(allDates)
 
 	result := make(map[string]float64)
 	for _, d := range dates {
@@ -244,7 +247,8 @@ func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
 }
 
 // getAnnualReportDates 通过 datacenter-web API 获取所有年报日期（带重试）
-func getAnnualReportDates(code string, maxYears int) ([]string, error) {
+// getReportDates 获取所有报告日期（年报+季报），返回降序排列
+func getReportDates(code string, maxYears int) ([]string, error) {
 	url := fmt.Sprintf("%s?sortColumns=REPORT_DATE&sortTypes=-1&pageSize=500&pageNumber=1&reportName=RPT_DMSK_FN_BALANCE&columns=REPORT_DATE&source=WEB&filter=(SECURITY_CODE=\"%s\")", dcBaseURL, code)
 	url = strings.ReplaceAll(url, `"`, "%22")
 
@@ -277,12 +281,10 @@ func getAnnualReportDates(code string, maxYears int) ([]string, error) {
 			continue
 		}
 		dateStr = strings.TrimSpace(dateStr)
-		if strings.Contains(dateStr, "12-31") {
-			// 提取 yyyy-mm-dd 部分
-			parts := strings.Fields(dateStr)
-			if len(parts) > 0 {
-				dateSet[parts[0]] = struct{}{}
-			}
+		// 提取 yyyy-mm-dd 部分（去掉时间后缀）
+		parts := strings.Fields(dateStr)
+		if len(parts) > 0 {
+			dateSet[parts[0]] = struct{}{}
 		}
 	}
 
@@ -298,11 +300,23 @@ func getAnnualReportDates(code string, maxYears int) ([]string, error) {
 			}
 		}
 	}
-	// 只保留最近N年
-	if maxYears > 0 && len(dates) > maxYears {
-		dates = dates[:maxYears]
+	// 限制数量：年报+季报，maxYears年约 maxYears*4+4 个报告期
+	limit := maxYears*4 + 4
+	if maxYears > 0 && len(dates) > limit {
+		dates = dates[:limit]
 	}
 	return dates, nil
+}
+
+// filterAnnualDates 从所有报告日期中过滤出年报（12-31结尾）
+func filterAnnualDates(dates []string) []string {
+	var annuals []string
+	for _, d := range dates {
+		if strings.HasSuffix(d, "-12-31") {
+			annuals = append(annuals, d)
+		}
+	}
+	return annuals
 }
 
 func fetchHSF10(endpoint string, companyType int, date, fullCode string) (map[string]any, error) {
