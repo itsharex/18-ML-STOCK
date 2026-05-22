@@ -93,8 +93,15 @@ case "$PLATFORM" in
     build_windows
     ;;
   all)
+    # 注意：wails build -clean 会清空 build/bin/，因此 mac 和 windows 必须分别调用脚本
+    # 或先 build_windows（产物 zip 在 -clean 后创建），再 build_mac（-clean 会删除 zip）
+    # 正确做法：先构建并保存产物，再构建下一个
     build_mac
+    # 将 macOS DMG 临时移出 build/bin，防止 windows 构建的 -clean 删除
+    mv "${BIN_DIR}/stockfinlens-macos-universal-v${VERSION}.dmg" "$(pwd)/stockfinlens-macos-universal-v${VERSION}.dmg.tmp"
     build_windows
+    # 将 DMG 移回
+    mv "$(pwd)/stockfinlens-macos-universal-v${VERSION}.dmg.tmp" "${BIN_DIR}/stockfinlens-macos-universal-v${VERSION}.dmg"
     ;;
   *)
     echo "Usage: $0 [mac|windows|all]"

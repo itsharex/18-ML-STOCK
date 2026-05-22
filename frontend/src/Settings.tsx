@@ -180,7 +180,7 @@ export function Settings({
     saveSettings(newSettings)
   }
 
-  const version = '1.3.39'
+  const version = '1.3.40'
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateChecking(true)
