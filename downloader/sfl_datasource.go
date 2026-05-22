@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -207,6 +208,33 @@ func (c *SFLClient) FetchStockBasic(tsCode string) (*SFLStockBasic, error) {
 		ListDate: getStr(item, idx, "list_date"),
 		IsHS:     getStr(item, idx, "is_hs"),
 	}, nil
+}
+
+// FetchAllStockBasic 批量获取全市场股票基础信息（不带 ts_code 参数）
+func (c *SFLClient) FetchAllStockBasic() ([]SFLStockBasic, error) {
+	params := map[string]interface{}{"list_status": "L"} // 只取上市状态的股票
+	fields := []string{"ts_code", "symbol", "name", "area", "industry", "market", "list_date", "is_hs"}
+
+	resp, err := c.query("stock_basic", params, fields)
+	if err != nil {
+		return nil, fmt.Errorf("stock_basic 全量查询失败: %w", err)
+	}
+
+	idx := buildFieldIndex(resp.Data.Fields)
+	result := make([]SFLStockBasic, 0, len(resp.Data.Items))
+	for _, item := range resp.Data.Items {
+		result = append(result, SFLStockBasic{
+			TsCode:   getStr(item, idx, "ts_code"),
+			Symbol:   getStr(item, idx, "symbol"),
+			Name:     getStr(item, idx, "name"),
+			Area:     getStr(item, idx, "area"),
+			Industry: getStr(item, idx, "industry"),
+			Market:   getStr(item, idx, "market"),
+			ListDate: getStr(item, idx, "list_date"),
+			IsHS:     getStr(item, idx, "is_hs"),
+		})
+	}
+	return result, nil
 }
 
 // ========== 日线行情 ==========
@@ -757,6 +785,132 @@ func (c *SFLClient) FetchConceptDetail(conceptID string) ([]SFLConceptStock, err
 			InDate:      getStr(item, idx, "in_date"),
 			OutDate:     getStr(item, idx, "out_date"),
 		})
+	}
+	return result, nil
+}
+
+// FetchAllLatestFinaIndicator 批量获取全市场最新一期财务指标
+// tushare fina_indicator 接口支持不带 ts_code 返回全市场，但必须指定 end_date（报告期）
+// 策略：尝试最近 4 个报告期（年报→三季报→半年报→一季报），合并取每只股票的最新数据
+func (c *SFLClient) FetchAllLatestFinaIndicator() ([]SFLFinaIndicator, error) {
+	fields := []string{"ts_code", "end_date", "roe", "roe_diluted", "roe_avg",
+		"grossprofit_margin", "netprofit_margin", "op_of_gr", "debt_to_assets",
+		"current_ratio", "quick_ratio", "ocf_to_sales", "ocf_to_opincome", "roic", "ebitda"}
+
+	// 生成最近 4 个报告期：从最近完整年度往回推
+	now := time.Now()
+	year := now.Year()
+	// 如果还没到 4 月底，上一年年报可能未完全披露，多往前推一年
+	if now.Month() < 5 {
+		year--
+	}
+	periods := []string{
+		fmt.Sprintf("%d1231", year),     // 年报
+		fmt.Sprintf("%d0930", year),     // 三季报
+		fmt.Sprintf("%d0630", year),     // 半年报
+		fmt.Sprintf("%d0331", year),     // 一季报
+		fmt.Sprintf("%d1231", year-1),   // 上一年年报（兜底）
+	}
+
+	// 合并多期结果，取每只股票的最新一期
+	latest := make(map[string]SFLFinaIndicator)
+	for _, endDate := range periods {
+		params := map[string]interface{}{"end_date": endDate}
+		resp, err := c.query("fina_indicator", params, fields)
+		if err != nil {
+			continue // 单期失败不中断，继续下一期
+		}
+		idx := buildFieldIndex(resp.Data.Fields)
+		for _, item := range resp.Data.Items {
+			tsCode := getStr(item, idx, "ts_code")
+			existing, ok := latest[tsCode]
+			if !ok || getStr(item, idx, "end_date") > existing.EndDate {
+				latest[tsCode] = SFLFinaIndicator{
+					TsCode:            tsCode,
+					EndDate:           getStr(item, idx, "end_date"),
+					ROE:               getFloat(item, idx, "roe"),
+					ROEDiluted:        getFloat(item, idx, "roe_diluted"),
+					ROEAvg:            getFloat(item, idx, "roe_avg"),
+					GrossprofitMargin: getFloat(item, idx, "grossprofit_margin"),
+					NetprofitMargin:   getFloat(item, idx, "netprofit_margin"),
+					OpOfGr:            getFloat(item, idx, "op_of_gr"),
+					DebtToAssets:      getFloat(item, idx, "debt_to_assets"),
+					CurrentRatio:      getFloat(item, idx, "current_ratio"),
+					QuickRatio:        getFloat(item, idx, "quick_ratio"),
+					OCFToSales:        getFloat(item, idx, "ocf_to_sales"),
+					OCFToOpIncome:     getFloat(item, idx, "ocf_to_opincome"),
+					ROIC:              getFloat(item, idx, "roic"),
+					EBITDA:            getFloat(item, idx, "ebitda"),
+				}
+			}
+		}
+		if len(latest) > 1000 {
+			break // 已获取足够数据，提前结束
+		}
+	}
+
+	if len(latest) == 0 {
+		return nil, fmt.Errorf("fina_indicator 全量查询失败：所有报告期均无数据")
+	}
+
+	result := make([]SFLFinaIndicator, 0, len(latest))
+	for _, v := range latest {
+		result = append(result, v)
+	}
+	return result, nil
+}
+
+// FetchAllConceptMappings 获取全市场概念映射（股票代码 → 概念列表）
+// 策略：先获取概念列表，再逐概念获取成分股，反向构建映射
+func (c *SFLClient) FetchAllConceptMappings() (map[string][]string, error) {
+	// 1. 获取概念列表
+	concepts, err := c.FetchConceptList()
+	if err != nil {
+		return nil, fmt.Errorf("获取概念列表失败: %w", err)
+	}
+	if len(concepts) == 0 {
+		return nil, fmt.Errorf("概念列表为空")
+	}
+
+	// 2. 逐概念获取成分股，反向构建映射
+	mappings := make(map[string]map[string]struct{}) // symbol -> set(concept_name)
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10) // 并发限制 10
+
+	for _, concept := range concepts {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(id, name string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			stocks, err := c.FetchConceptDetail(id)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			for _, s := range stocks {
+				if s.OutDate != "" {
+					continue // 已退出该概念
+				}
+				if mappings[s.TsCode] == nil {
+					mappings[s.TsCode] = make(map[string]struct{})
+				}
+				mappings[s.TsCode][name] = struct{}{}
+			}
+			mu.Unlock()
+		}(concept.Code, concept.Name)
+	}
+	wg.Wait()
+
+	// 3. 转换为 map[string][]string
+	result := make(map[string][]string, len(mappings))
+	for sym, set := range mappings {
+		concepts := make([]string, 0, len(set))
+		for name := range set {
+			concepts = append(concepts, name)
+		}
+		result[sym] = concepts
 	}
 	return result, nil
 }

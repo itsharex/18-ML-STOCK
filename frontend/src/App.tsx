@@ -675,6 +675,14 @@ function App() {
     }
   }, [settings.theme])
 
+  // 市场热点开关关闭时自动收起热点面板
+  useEffect(() => {
+    if (!settings.enableHotConcepts && hotPanelOpen) {
+      setHotPanelOpen(false)
+      setSelectedHotConceptCode(null)
+    }
+  }, [settings.enableHotConcepts])
+
   // 本地搜索过滤：按代码、名称或拼音首字母匹配，最多10条
   const suggestions = useMemo(() => {
     const q = query.trim()
@@ -1128,6 +1136,8 @@ function App() {
       setComparables([])
       setAppliedComparables([])
       setCompRecommendations([])
+      setDataHistory([])
+      setDataMissing(false)
       await loadReportHistory(stock.code, true)
       await loadDataHistory(stock.code)
       const p = await loadProfile(stock.code)
@@ -2077,42 +2087,46 @@ function App() {
 
       {/* 左栏：自选列表 */}
       <aside className="sidebar" style={{ width: sidebarWidth, minWidth: sidebarWidth }}>
-        {/* 市场热点入口：固定行，点击 → 送到中栏 */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '8px 0',
-          marginTop: 10,
-          borderBottom: '1px solid rgba(148,163,184,0.1)',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 16 }}>🔥</span>
-            <span style={{ fontWeight: 600, fontSize: 14 }}>市场热点</span>
-            {hotConceptDate && (
-              <span style={{ fontSize: 11, color: '#64748b' }}>{hotConceptDate}</span>
+        {settings.enableHotConcepts && (
+          <>
+            {/* 市场热点入口：固定行，点击 → 送到中栏 */}
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '8px 0',
+              marginTop: 10,
+              borderBottom: '1px solid rgba(148,163,184,0.1)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 16 }}>🔥</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>市场热点</span>
+                {hotConceptDate && (
+                  <span style={{ fontSize: 11, color: '#64748b' }}>{hotConceptDate}</span>
+                )}
+              </div>
+              <span
+                style={{ fontSize: 18, color: '#3b82f6', cursor: 'pointer', padding: '0 4px' }}
+                title="查看热点详情"
+                onClick={() => {
+                  setHotPanelOpen(true)
+                  setSelectedCode(null)
+                  setSelectedHotConceptCode(null)
+                  setReport(null)
+                  setViewingHistory(null)
+                  setHistoryContent('')
+                  if (!hotConceptLoading) {
+                    loadHotConcepts()
+                  }
+                }}
+              >
+                →
+              </span>
+            </div>
+            {hotConceptError && (
+              <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>{hotConceptError}</div>
             )}
-          </div>
-          <span
-            style={{ fontSize: 18, color: '#3b82f6', cursor: 'pointer', padding: '0 4px' }}
-            title="查看热点详情"
-            onClick={() => {
-              setHotPanelOpen(true)
-              setSelectedCode(null)
-              setSelectedHotConceptCode(null)
-              setReport(null)
-              setViewingHistory(null)
-              setHistoryContent('')
-              if (!hotConceptLoading) {
-                loadHotConcepts()
-              }
-            }}
-          >
-            →
-          </span>
-        </div>
-        {hotConceptError && (
-          <div style={{ fontSize: 12, color: '#ef4444', padding: '4px 0' }}>{hotConceptError}</div>
+          </>
         )}
 
         <div className="sidebar-header">
@@ -2288,6 +2302,8 @@ function App() {
                   setComparables([])
                   setAppliedComparables([])
                   setCompRecommendations([])
+                  setDataHistory([])
+                  setDataMissing(false)
                   loadReportHistory(s.code, true)
                   loadDataHistory(s.code)
                   loadProfile(s.code).then((p) => loadRiskRadar(s.code, p?.industry || ''))
@@ -3267,10 +3283,9 @@ function App() {
                           key={r.symbol}
                           className="cp-rec-item"
                           onClick={() => handleAddRecommendedComparable(r.symbol)}
-                          title={r.reasons && r.reasons.length > 0 ? r.reasons.join('\n') : ''}
                           style={{
                             display: 'flex',
-                            alignItems: 'center',
+                            alignItems: 'flex-start',
                             justifyContent: 'space-between',
                             padding: '4px 6px',
                             borderRadius: 4,
@@ -3280,17 +3295,24 @@ function App() {
                             fontSize: 11,
                           }}
                         >
-                          <div>
-                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{info?.name || r.name || r.symbol}</span>
-                            <span style={{ color: 'var(--text-secondary, #64748b)', marginLeft: 4 }}>{r.symbol}</span>
-                            <span style={{ color: '#fbbf24', marginLeft: 6 }}>相似度 {r.score.toFixed(0)}</span>
-                            {r.dataQuality === 'high' ? (
-                              <span style={{ color: '#4ade80', marginLeft: 4 }}>✅</span>
-                            ) : (
-                              <span style={{ color: '#fbbf24', marginLeft: 4 }}>⚠️</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+                              <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{info?.name || r.name || r.symbol}</span>
+                              <span style={{ color: 'var(--text-secondary, #64748b)' }}>{r.symbol}</span>
+                              <span style={{ color: '#fbbf24' }}>相似度 {r.score.toFixed(0)}</span>
+                              {r.dataQuality === 'high' ? (
+                                <span style={{ color: '#4ade80' }}>✅</span>
+                              ) : (
+                                <span style={{ color: '#fbbf24' }}>⚠️</span>
+                              )}
+                            </div>
+                            {r.reasons && r.reasons.length > 0 && (
+                              <div style={{ marginTop: 2, color: '#94a3b8', fontSize: 10, lineHeight: 1.4 }}>
+                                {r.reasons.join(' · ')}
+                              </div>
                             )}
                           </div>
-                          <span style={{ color: '#60a5fa', fontSize: 16 }}>+</span>
+                          <span style={{ color: '#60a5fa', fontSize: 16, marginLeft: 4, flexShrink: 0 }}>+</span>
                         </div>
                       )
                     })}

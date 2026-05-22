@@ -122,6 +122,10 @@ export function GetIndustryTaskStatus() {
   return window['go']['main']['App']['GetIndustryTaskStatus']();
 }
 
+export function GetMarketCacheStatus() {
+  return window['go']['main']['App']['GetMarketCacheStatus']();
+}
+
 export function GetModule4Status(arg1) {
   return window['go']['main']['App']['GetModule4Status'](arg1);
 }
@@ -228,6 +232,10 @@ export function RecommendComparables(arg1) {
 
 export function RefreshIndustryBaselines() {
   return window['go']['main']['App']['RefreshIndustryBaselines']();
+}
+
+export function RefreshMarketCache() {
+  return window['go']['main']['App']['RefreshMarketCache']();
 }
 
 export function RefreshStockProfile(arg1) {

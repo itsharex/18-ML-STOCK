@@ -65,6 +65,8 @@ export function GetIndustryMetrics(arg1:string):Promise<analyzer.IndustryMetrics
 
 export function GetIndustryTaskStatus():Promise<Record<string, any>>;
 
+export function GetMarketCacheStatus():Promise<Record<string, any>>;
+
 export function GetModule4Status(arg1:string):Promise<boolean>;
 
 export function GetPolicyLibraryMeta():Promise<Record<string, string>>;
@@ -118,6 +120,8 @@ export function QuickAnalyzeStock(arg1:string,arg2:string,arg3:string,arg4:strin
 export function RecommendComparables(arg1:string):Promise<Array<analyzer.ComparableRecommendation>>;
 
 export function RefreshIndustryBaselines():Promise<Record<string, analyzer.IndustryBaseline>>;
+
+export function RefreshMarketCache():Promise<string>;
 
 export function RefreshStockProfile(arg1:string):Promise<main.StockProfile>;
 

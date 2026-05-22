@@ -16,6 +16,7 @@ export interface AppSettings {
   analysisNotification: boolean
   riskSensitivity: 'strict' | 'standard' | 'loose'
   autoCheckUpdate: boolean
+  enableHotConcepts: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -30,6 +31,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   analysisNotification: true,
   riskSensitivity: 'standard',
   autoCheckUpdate: true,
+  enableHotConcepts: false,
 }
 
 const SETTINGS_KEY = 'stockfinlens-settings-v1'
@@ -98,7 +100,7 @@ export function Settings({
   onCheckPythonDeps,
 }: SettingsProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'appearance' | 'data' | 'about'>('appearance')
+  const [activeTab, setActiveTab] = useState<'appearance' | 'features' | 'data' | 'about'>('appearance')
   const dropdownRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
 
@@ -220,6 +222,7 @@ export function Settings({
         <div ref={dropdownRef} className="settings-dropdown">
           <div className="settings-tabs">
             <button className={activeTab === 'appearance' ? 'active' : ''} onClick={() => setActiveTab('appearance')}>外观</button>
+            <button className={activeTab === 'features' ? 'active' : ''} onClick={() => setActiveTab('features')}>功能</button>
             <button className={activeTab === 'data' ? 'active' : ''} onClick={() => setActiveTab('data')}>数据</button>
             <button className={activeTab === 'about' ? 'active' : ''} onClick={() => setActiveTab('about')}>关于</button>
           </div>
@@ -232,6 +235,37 @@ export function Settings({
                   <label className="settings-radio"><input type="radio" name="theme" checked={settings.theme === 'dark'} onChange={() => updateSetting('theme', 'dark')} /><span>深色</span></label>
                   <label className="settings-radio"><input type="radio" name="theme" checked={settings.theme === 'light'} onChange={() => updateSetting('theme', 'light')} /><span>浅色</span></label>
                   <label className="settings-radio"><input type="radio" name="theme" checked={settings.theme === 'system'} onChange={() => updateSetting('theme', 'system')} /><span>跟随系统</span></label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'features' && (
+            <div className="settings-section">
+              <div className="settings-item settings-item-inline">
+                <label>市场热点</label>
+                <div className="settings-toggle-switch">
+                  <label className="switch"><input type="checkbox" checked={settings.enableHotConcepts} onChange={(e) => updateSetting('enableHotConcepts', e.target.checked)} /><span className="slider"></span></label>
+                </div>
+              </div>
+              <div className="settings-item settings-item-inline">
+                <label>分析完成提示</label>
+                <div className="settings-toggle-switch">
+                  <label className="switch"><input type="checkbox" checked={settings.analysisNotification} onChange={(e) => updateSetting('analysisNotification', e.target.checked)} /><span className="slider"></span></label>
+                </div>
+              </div>
+              <div className="settings-item settings-item-inline">
+                <label>风险警示敏感度</label>
+                <div className="settings-input-group">
+                  <select
+                    value={settings.riskSensitivity}
+                    onChange={(e) => updateSetting('riskSensitivity', e.target.value as 'strict' | 'standard' | 'loose')}
+                    style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(148,163,184,0.3)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: 13 }}
+                  >
+                    <option value="strict">严格</option>
+                    <option value="standard">标准（默认）</option>
+                    <option value="loose">宽松</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -251,27 +285,6 @@ export function Settings({
                 <label>自动更新行业库</label>
                 <div className="settings-toggle-switch">
                   <label className="switch"><input type="checkbox" checked={settings.autoUpdateIndustryDB} onChange={(e) => updateSetting('autoUpdateIndustryDB', e.target.checked)} /><span className="slider"></span></label>
-                </div>
-              </div>
-              <div className="settings-item settings-item-inline">
-                <label>分析完成提示</label>
-                <div className="settings-toggle-switch">
-                  <label className="switch"><input type="checkbox" checked={settings.analysisNotification} onChange={(e) => updateSetting('analysisNotification', e.target.checked)} /><span className="slider"></span></label>
-                </div>
-              </div>
-              {/* 风险警示敏感度 */}
-              <div className="settings-item settings-item-inline">
-                <label>风险警示敏感度</label>
-                <div className="settings-input-group">
-                  <select
-                    value={settings.riskSensitivity}
-                    onChange={(e) => updateSetting('riskSensitivity', e.target.value as 'strict' | 'standard' | 'loose')}
-                    style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid rgba(148,163,184,0.3)', background: 'rgba(15,23,42,0.6)', color: '#e2e8f0', fontSize: 13 }}
-                  >
-                    <option value="strict">严格</option>
-                    <option value="standard">标准（默认）</option>
-                    <option value="loose">宽松</option>
-                  </select>
                 </div>
               </div>
 
@@ -481,7 +494,11 @@ export function Settings({
               <img src="/logo.png" className="about-logo" alt="StockFinLens Logo" />
               <div className="about-title">股票财报透镜</div>
               <div className="about-version">版本 {version}</div>
-              <div className="about-desc">穿透财报看真相，自动扫描财务风险，重要指标可溯源。</div>
+              <div className="about-desc">
+                穿透财报看真相<br />
+                揭示风险防踩雷<br />
+                重要指标可溯源
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 8 }}>
                 <button
                   className="about-link"

@@ -5,7 +5,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 )
 
 // ComparableRecommendation 可比公司推荐项
@@ -17,14 +19,27 @@ type ComparableRecommendation struct {
 	DataQuality string   `json:"dataQuality"` // high/medium/low（本地是否有财报数据）
 }
 
+// MarketCacheItem 市场缓存条目（由 app 层从 downloader.MarketCache 转换而来）
+// analyzer 包独立定义，避免循环导入 downloader
+type MarketCacheItem struct {
+	Symbol    string
+	Name      string
+	Industry  string
+	MarketCap float64
+	ROE       float64
+	GM        float64
+	Concepts  []string
+}
+
 // RecommendComparables 基于多维度相似度自动推荐可比公司
 // targetSymbol: 目标股票代码（带点格式，如 "000001.SZ"）
 // targetProfile: 目标股票资料（行业、市值等）
 // targetData: 目标股票财务数据（用于提取 ROE、毛利率）
-// dataDir: 本地数据根目录（用于扫描候选股票）
-// allSymbols: 全市场代码列表（扩大候选池）
+// dataDir: 本地数据根目录（用于扫描候选股票，当 cache 为空时 fallback）
+// allSymbols: 全市场代码列表（扩大候选池，当 cache 为空时 fallback）
+// cacheItems: 全市场缓存数据（优先使用，避免推荐结果局限于自选股）
 // maxResults: 最大返回数量
-func RecommendComparables(targetSymbol string, targetProfile *StockProfile, targetData *FinancialData, dataDir string, allSymbols []string, maxResults int) []ComparableRecommendation {
+func RecommendComparables(targetSymbol string, targetProfile *StockProfile, targetData *FinancialData, dataDir string, allSymbols []string, cacheItems map[string]MarketCacheItem, maxResults int) []ComparableRecommendation {
 	if maxResults <= 0 {
 		maxResults = 5
 	}
@@ -58,17 +73,25 @@ func RecommendComparables(targetSymbol string, targetProfile *StockProfile, targ
 		}
 	}
 
+	// 读取目标股票活跃度
+	targetActivity := loadActivityScore(filepath.Join(dataDir, "data"), targetSymbol)
+
+	fmt.Printf("[RecommendComparables] target=%s industry=%s ROE=%.4f GM=%.4f activity=%.1f\n", targetSymbol, targetIndustry, targetROE, targetGM, targetActivity)
+
 	// 读取目标股票的概念标签
 	targetConcepts := loadConcepts(filepath.Join(dataDir, "data"), targetSymbol)
+	fmt.Printf("[RecommendComparables] target concepts=%d\n", len(targetConcepts))
 
-	// 扫描候选股票（本地 + 全市场）
-	candidates := scanLocalCandidates(dataDir, targetSymbol, allSymbols)
+	// 扫描候选股票（优先从全市场缓存读取，避免推荐结果局限于自选股）
+	candidates := scanCandidates(dataDir, targetSymbol, allSymbols, cacheItems)
+	fmt.Printf("[RecommendComparables] candidates=%d\n", len(candidates))
 
 	// 计算每个候选股票的相似度
 	var scored []ComparableRecommendation
-	for _, c := range candidates {
+	startCompute := time.Now()
+	for i, c := range candidates {
 		score, reasons, dataQuality := computeSimilarity(
-			targetIndustry, targetMarketCap, targetROE, targetGM, targetConcepts,
+			targetIndustry, targetMarketCap, targetROE, targetGM, targetActivity, targetConcepts,
 			c,
 		)
 		// 设置最低得分门槛：目标有行业信息时至少15分，否则至少8分
@@ -85,16 +108,25 @@ func RecommendComparables(targetSymbol string, targetProfile *StockProfile, targ
 				DataQuality: dataQuality,
 			})
 		}
-	}
-
-	// 按得分降序排序
-	for i := 0; i < len(scored)-1; i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].Score > scored[i].Score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
+		if i < 3 || i == len(candidates)-1 {
+			fmt.Printf("[RecommendComparables] candidate[%d] %s score=%.2f reasons=%v\n", i, c.Symbol, score, reasons)
 		}
 	}
+	fmt.Printf("[RecommendComparables] compute done: %d/%d passed门槛 in %.3fs\n", len(scored), len(candidates), time.Since(startCompute).Seconds())
+
+	// 按得分降序排序（全市场候选可能达 5000+，必须用 O(n log n) 排序）
+	// 得分相同时按股票代码字典序稳定排序，消除 map 遍历随机性导致的推荐结果抖动
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].Score != scored[j].Score {
+			return scored[i].Score > scored[j].Score
+		}
+		return scored[i].Symbol < scored[j].Symbol
+	})
+	fmt.Printf("[RecommendComparables] sort done, top5: ")
+	for i := 0; i < 5 && i < len(scored); i++ {
+		fmt.Printf("%s(%.0f) ", scored[i].Symbol, scored[i].Score)
+	}
+	fmt.Println()
 
 	if len(scored) > maxResults {
 		scored = scored[:maxResults]
@@ -104,20 +136,74 @@ func RecommendComparables(targetSymbol string, targetProfile *StockProfile, targ
 
 // candidateInfo 候选股票内部信息
 type candidateInfo struct {
-	Symbol    string
-	Name      string
-	Industry  string
-	MarketCap float64
-	ROE       float64
-	GM        float64
-	HasData   bool     // 是否有本地财报数据
-	Concepts  []string // 概念/风口标签
+	Symbol       string
+	Name         string
+	Industry     string
+	MarketCap    float64
+	ROE          float64
+	GM           float64
+	ActivityScore float64  // 活跃度分数 (0-100)
+	HasData      bool     // 是否有本地财报数据
+	Concepts     []string // 概念/风口标签
 }
 
 // StockProfile 推荐算法使用的股票资料子集（避免循环导入）
 type StockProfile struct {
 	Industry  string
 	MarketCap float64
+}
+
+// scanCandidates 扫描候选股票
+// 优先从全市场缓存读取（避免推荐结果局限于自选股），缓存为空时 fallback 到本地扫描
+func scanCandidates(dataDir, excludeSymbol string, allSymbols []string, cacheItems map[string]MarketCacheItem) []candidateInfo {
+	// 优先使用全市场缓存
+	if len(cacheItems) > 0 {
+		// 对 map key 排序后遍历，消除 Go map 遍历随机性，确保推荐结果稳定
+		var keys []string
+		for k := range cacheItems {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		var candidates []candidateInfo
+		dataRoot := filepath.Join(dataDir, "data")
+		for _, symbol := range keys {
+			if symbol == excludeSymbol {
+				continue
+			}
+			item := cacheItems[symbol]
+			industry := item.Industry
+			// 如果本地有 profile.json，用其行业覆盖缓存行业
+			// 保证候选股票与目标股票的行业来自同一数据源（东财API），命名体系一致
+			profilePath := filepath.Join(dataRoot, symbol, "profile.json")
+			if data, err := os.ReadFile(profilePath); err == nil {
+				localIndustry := extractJSONString(data, "industry")
+				if localIndustry != "" {
+					industry = localIndustry
+				}
+			}
+			// 优先使用本地 loadConcepts（含行业硬概念增强），本地无数据时 fallback 到缓存概念
+			concepts := loadConcepts(dataRoot, symbol)
+			if len(concepts) == 0 {
+				concepts = item.Concepts
+			}
+			candidates = append(candidates, candidateInfo{
+				Symbol:        item.Symbol,
+				Name:          item.Name,
+				Industry:      industry,
+				MarketCap:     item.MarketCap,
+				ROE:           item.ROE,
+				GM:            item.GM,
+				ActivityScore: loadActivityScore(dataRoot, symbol),
+				HasData:       item.ROE != 0 || item.GM != 0, // 缓存中有财务指标视为有数据
+				Concepts:      concepts,
+			})
+		}
+		return candidates
+	}
+
+	// fallback: 本地数据目录扫描（旧逻辑，兼容无缓存场景）
+	return scanLocalCandidates(dataDir, excludeSymbol, allSymbols)
 }
 
 // scanLocalCandidates 扫描本地数据目录获取候选股票，同时补充全市场代码
@@ -162,6 +248,13 @@ func scanLocalCandidates(dataDir, excludeSymbol string, allSymbols []string) []c
 			// 尝试读取概念标签
 			info.Concepts = loadConcepts(dataRoot, symbol)
 
+			// 读取活跃度（loadActivityScore 在 comparable.go 中定义，baseDir 为 dataDir）
+			act := loadActivityScore(dataDir, symbol)
+			if act < 0 {
+				act = 0
+			}
+			info.ActivityScore = act
+
 			localMap[symbol] = info
 		}
 	}
@@ -187,6 +280,12 @@ func scanLocalCandidates(dataDir, excludeSymbol string, allSymbols []string) []c
 			}
 			// 补充概念标签
 			info.Concepts = loadConcepts(dataRoot, symbol)
+			// 读取活跃度（loadActivityScore 在 comparable.go 中定义，baseDir 为 dataDir）
+			act := loadActivityScore(dataDir, symbol)
+			if act < 0 {
+				act = 0
+			}
+			info.ActivityScore = act
 			localMap[symbol] = info
 		}
 	}
@@ -228,8 +327,10 @@ var industrySynonyms = map[string][]string{
 	"计算机":       {"软件", "IT", "云计算", "人工智能", "AI"},
 	"软件":         {"计算机", "IT", "云计算"},
 	"人工智能":     {"计算机", "AI", "软件"},
-	"化工":         {"化学", "化学制品", "精细化工", "石化"},
-	"化学制品":     {"化工", "精细化工"},
+	"化工":         {"化学", "化学制品", "精细化工", "石化", "化工原料", "电子化学品"},
+	"化学制品":     {"化工", "精细化工", "化工原料", "电子化学品"},
+	"化工原料":     {"化工", "化学制品", "精细化工", "电子化学品"},
+	"电子化学品":   {"化工", "化学制品", "化工原料", "精细化工"},
 	"食品饮料":     {"食品", "饮料", "白酒", "啤酒", "乳制品"},
 	"白酒":         {"食品饮料", "酒类"},
 	"家电":         {"家用电器", "白色家电", "厨电"},
@@ -256,21 +357,23 @@ var equivalentIndustries = map[string][]string{
 }
 
 // computeSimilarity 计算候选股票与目标股票的相似度
-func computeSimilarity(targetIndustry string, targetMarketCap, targetROE, targetGM float64, targetConcepts []string, c candidateInfo) (float64, []string, string) {
+// 赛道匹配（行业/概念取最高）65% + 市值5% + ROE10% + 毛利率15% + 活跃度10% + 数据2%
+func computeSimilarity(targetIndustry string, targetMarketCap, targetROE, targetGM, targetActivity float64, targetConcepts []string, c candidateInfo) (float64, []string, string) {
 	score := 0.0
 	var reasons []string
 
-	// 1. 行业匹配 (65%)
+	// ===== 1. 赛道匹配 (65%) = max(行业匹配, 概念匹配) =====
+	// 1a. 行业匹配
 	industryScore := 0.0
+	var industryReasons []string
 	if targetIndustry != "" && c.Industry != "" {
 		if targetIndustry == c.Industry {
 			industryScore = 65
-			reasons = append(reasons, "同属"+targetIndustry)
+			industryReasons = append(industryReasons, "同属"+targetIndustry)
 		} else if isEquivalentIndustry(targetIndustry, c.Industry) {
 			industryScore = 45
-			reasons = append(reasons, "同属"+targetIndustry)
+			industryReasons = append(industryReasons, "同属"+targetIndustry)
 		} else {
-			// 简单的行业关键词匹配
 			targetKeys := extractIndustryKeywords(targetIndustry)
 			candidateKeys := extractIndustryKeywords(c.Industry)
 			matchCount := 0
@@ -287,68 +390,19 @@ func computeSimilarity(targetIndustry string, targetMarketCap, targetROE, target
 					partialScore = 65
 				}
 				industryScore = partialScore
-				reasons = append(reasons, "行业相近")
+				industryReasons = append(industryReasons, "行业相近")
 			} else {
-				// 检查同义词映射（产业链相关，但非同一细分行业）
 				if isSynonymIndustry(targetIndustry, c.Industry) {
 					industryScore = 25
-					reasons = append(reasons, "产业链相关")
+					industryReasons = append(industryReasons, "产业链相关")
 				}
 			}
 		}
 	}
-	score += industryScore
 
-	// 行业惩罚：如果目标有行业但候选没有，大幅降低得分
-	if targetIndustry != "" && c.Industry == "" {
-		// 无行业数据的候选，最高只能得 35 分（市值10+ROE15+毛利率5+数据质量5的封顶）
-		// 实际计算后会在最后统一打折
-	}
-
-	// 2. 市值相近 (10%)
-	if targetMarketCap > 0 && c.MarketCap > 0 {
-		ratio := targetMarketCap / c.MarketCap
-		if ratio < 1 {
-			ratio = c.MarketCap / targetMarketCap
-		}
-		if ratio <= 2 {
-			score += 10
-			reasons = append(reasons, "市值相近")
-		} else if ratio <= 5 {
-			ms := 10 * (1 - (ratio-2)/3)
-			if ms < 0 {
-				ms = 0
-			}
-			score += ms
-			reasons = append(reasons, "市值相近")
-		}
-	}
-
-	// 3. ROE 结构相似 (15%)
-	if targetROE != 0 && c.ROE != 0 {
-		diff := math.Abs(targetROE - c.ROE)
-		if diff < 0.03 {
-			score += 15
-			reasons = append(reasons, "ROE结构相似")
-		} else if diff < 0.10 {
-			score += 15 * (1 - (diff-0.03)/0.07)
-			reasons = append(reasons, "ROE结构相似")
-		}
-	}
-
-	// 4. 毛利率结构相似 (5%)
-	if targetGM != 0 && c.GM != 0 {
-		diff := math.Abs(targetGM - c.GM)
-		if diff < 0.05 {
-			score += 5
-			reasons = append(reasons, "毛利率结构相似")
-		} else if diff < 0.15 {
-			score += 5 * (1 - (diff-0.05)/0.10)
-			reasons = append(reasons, "毛利率结构相似")
-		}
-	}
-
-	// 5. 概念/风口匹配 (10%)
+	// 1b. 概念匹配
+	conceptScore := 0.0
+	var conceptReasons []string
 	if len(targetConcepts) > 0 && len(c.Concepts) > 0 {
 		overlap := 0
 		for _, tc := range targetConcepts {
@@ -359,33 +413,107 @@ func computeSimilarity(targetIndustry string, targetMarketCap, targetROE, target
 			}
 		}
 		if overlap > 0 {
-			conceptScore := 10.0 * float64(overlap) / float64(len(targetConcepts))
-			if conceptScore > 10 {
-				conceptScore = 10
+			conceptScore = 65.0 * float64(overlap) / float64(len(targetConcepts))
+			if conceptScore > 65 {
+				conceptScore = 65
 			}
-			score += conceptScore
-			reasons = append(reasons, fmt.Sprintf("共享%d个概念", overlap))
+			conceptReasons = append(conceptReasons, fmt.Sprintf("共享%d个概念", overlap))
 		}
 	}
 
-	// 6. 有财务数据加分（权重从 20% 降到 5%，避免"有数据就靠前"）
+	// 1c. 取赛道匹配最高分
+	trackScore := industryScore
+	reasons = industryReasons
+	if conceptScore > trackScore {
+		trackScore = conceptScore
+		reasons = conceptReasons
+	}
+	score += trackScore
+
+	// 2. 市值相近 (5%)
+	if targetMarketCap > 0 && c.MarketCap > 0 {
+		ratio := targetMarketCap / c.MarketCap
+		if ratio < 1 {
+			ratio = c.MarketCap / targetMarketCap
+		}
+		if ratio <= 2 {
+			score += 5
+			reasons = append(reasons, "市值相近")
+		} else if ratio <= 5 {
+			ms := 5 * (1 - (ratio-2)/3)
+			if ms < 0 {
+				ms = 0
+			}
+			score += ms
+			reasons = append(reasons, "市值相近")
+		}
+	}
+
+	// 3. ROE 结构相似 (10%)
+	if targetROE != 0 && c.ROE != 0 {
+		diff := math.Abs(targetROE - c.ROE)
+		if diff < 0.03 {
+			score += 10
+			reasons = append(reasons, "ROE结构相似")
+		} else if diff < 0.10 {
+			score += 10 * (1 - (diff-0.03)/0.07)
+			reasons = append(reasons, "ROE结构相似")
+		}
+	} else if targetROE != 0 && trackScore >= 40 {
+		score += 4
+		reasons = append(reasons, "同行业ROE预期相近")
+	}
+
+	// 4. 毛利率结构相似 (15%)
+	if targetGM != 0 && c.GM != 0 {
+		diff := math.Abs(targetGM - c.GM)
+		if diff < 0.05 {
+			score += 15
+			reasons = append(reasons, "毛利率结构相似")
+		} else if diff < 0.15 {
+			score += 15 * (1 - (diff-0.05)/0.10)
+			reasons = append(reasons, "毛利率结构相似")
+		}
+	} else if targetGM != 0 && trackScore >= 40 {
+		score += 4
+		reasons = append(reasons, "同行业毛利率预期相近")
+	}
+
+	// 5. 活跃度相近 (10%)
+	if targetActivity > 0 && c.ActivityScore > 0 {
+		diff := math.Abs(targetActivity - c.ActivityScore)
+		if diff < 10 {
+			score += 10
+			reasons = append(reasons, "活跃度相近")
+		} else if diff < 30 {
+			as := 10 * (1 - (diff-10)/20)
+			if as < 0 {
+				as = 0
+			}
+			score += as
+			reasons = append(reasons, "活跃度相近")
+		}
+	}
+
+	// 6. 数据质量 (2%)
 	dataQuality := "low"
 	if c.HasData {
-		score += 5
+		score += 2
 		dataQuality = "high"
 		reasons = append(reasons, "本地有财报数据")
 	} else if c.Industry != "" {
-		score += 2
+		score += 1
 		dataQuality = "medium"
 	}
 
-	// 行业惩罚1：目标有行业但候选无行业数据，得分打 3 折
+	// 惩罚1：目标有行业但候选无行业数据，得分打 3 折
 	if targetIndustry != "" && c.Industry == "" {
 		score = score * 0.3
 	}
 
-	// 行业惩罚2：目标有行业且候选有行业，但行业完全不相关（非同义词且无关键词重叠），得分打 2 折
-	if targetIndustry != "" && c.Industry != "" && industryScore == 0 {
+	// 惩罚2：赛道匹配分 < 15 视为业务不相关，得分打 2 折
+	// （原逻辑：industryScore==0 打2折；新逻辑：trackScore<15 打2折，允许概念匹配兜底）
+	if targetIndustry != "" && c.Industry != "" && trackScore < 15 {
 		score = score * 0.2
 	}
 
@@ -524,41 +652,99 @@ func extractLatestMetrics(dataRoot, symbol string) (roe, gm float64) {
 	return
 }
 
-// loadConcepts 从本地 concepts.json 读取股票的概念/风口标签
+// 行业到硬业务概念的增强映射：数据源概念标签往往过于宽泛，根据行业补充细分赛道概念
+var industryConceptBoost = map[string][]string{
+	"电子化学品": {"光刻胶", "CMP", "湿电子化学品", "电子特气", "半导体材料", "封装材料"},
+	"半导体":    {"晶圆", "光刻胶", "CMP", "封测", "刻蚀", "薄膜沉积", "芯片设计"},
+	"化工原料":  {"光刻胶", "CMP", "电子化学品", "新材料", "半导体材料"},
+	"集成电路":  {"晶圆", "光刻胶", "CMP", "封测", "芯片设计", "EDA"},
+	"芯片":      {"晶圆", "光刻胶", "封测", "芯片设计", "AI芯片"},
+	"医药":      {"创新药", "仿制药", "CXO", "生物药"},
+	"制药":      {"创新药", "仿制药", "CXO", "生物药"},
+	"化学制药":  {"创新药", "仿制药", "原料药", "CXO"},
+	"生物制药":  {"创新药", "生物药", "疫苗", "CXO"},
+	"医疗器械":  {"高值耗材", "医疗设备", "IVD", "康复器械"},
+	"新能源":    {"锂电池", "光伏", "风电", "储能", "氢能"},
+	"光伏":      {"硅料", "硅片", "电池片", "组件", "逆变器"},
+	"锂电池":    {"正极材料", "负极材料", "电解液", "隔膜", "固态电池"},
+	"汽车":      {"新能源汽车", "智能驾驶", "汽车零部件", "车联网"},
+	"整车":      {"新能源汽车", "智能驾驶", "出海"},
+	"汽车零部件": {"智能驾驶", "轻量化", "热管理", "线控底盘"},
+	"消费电子":  {"手机", "可穿戴", "AR/VR", "智能家居"},
+	"通信":      {"5G", "光模块", "卫星通信", "算力网络"},
+	"通信设备":  {"5G", "光模块", "基站", "卫星通信"},
+	"计算机":    {"云计算", "人工智能", "信创", "数据要素"},
+	"软件":      {"SaaS", "人工智能", "信创", "工业软件"},
+	"人工智能":  {"大模型", "算力", "AI应用", "机器人"},
+	"化工":      {"新材料", "精细化工", "电子化学品", "可降解"},
+	"化学制品":  {"新材料", "精细化工", "电子化学品"},
+	"食品饮料":  {"白酒", "乳制品", "预制菜", "调味品"},
+	"白酒":      {"高端白酒", "次高端白酒", "酱酒"},
+	"有色金属":  {"锂", "稀土", "铜", "铝", "黄金"},
+	"电力":      {"火电", "水电", "核电", "新能源发电"},
+	"传媒":      {"游戏", "影视", "广告", "短剧"},
+	"游戏":      {"手游", "端游", "出海", "AI游戏"},
+	"互联网":    {"电商", "本地生活", "云计算", "出海"},
+	"建筑":      {"基建", "房建", "出海", "装配式建筑"},
+	"建材":      {"水泥", "玻璃", "消费建材", "新材料"},
+	"交通运输":  {"快递", "航空", "港口", "物流"},
+	"物流":      {"快递", "供应链", "冷链", "跨境物流"},
+}
+
+// loadConcepts 从本地 concepts.json 读取股票的概念/风口标签，并根据行业补充硬业务概念
 func loadConcepts(dataRoot, symbol string) []string {
 	path := filepath.Join(dataRoot, symbol, "concepts.json")
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	// 简单解析 JSON 中的 concepts 数组
-	concepts := extractJSONStringArray(data, "concepts")
-	// 对长字符串概念按 '、' 拆分（如 "电信、广播电视和卫星传输服务"）
+
 	var result []string
 	seen := make(map[string]struct{})
-	for _, c := range concepts {
-		c = strings.TrimSpace(c)
-		if c == "" {
-			continue
+
+	// 1. 解析本地 concepts.json（如果存在）
+	if err == nil {
+		concepts := extractJSONStringArray(data, "concepts")
+		for _, c := range concepts {
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
+			}
+			// 如果概念包含 '、'，拆分为多个子概念
+			if strings.Contains(c, "、") {
+				for _, part := range strings.Split(c, "、") {
+					part = strings.TrimSpace(part)
+					if part != "" {
+						if _, ok := seen[part]; !ok {
+							seen[part] = struct{}{}
+							result = append(result, part)
+						}
+					}
+				}
+			} else {
+				if _, ok := seen[c]; !ok {
+					seen[c] = struct{}{}
+					result = append(result, c)
+				}
+			}
 		}
-		// 如果概念包含 '、'，拆分为多个子概念
-		if strings.Contains(c, "、") {
-			for _, part := range strings.Split(c, "、") {
-				part = strings.TrimSpace(part)
-				if part != "" {
-					if _, ok := seen[part]; !ok {
-						seen[part] = struct{}{}
-						result = append(result, part)
+	}
+
+	// 2. 根据本地 profile.json 的行业，补充硬业务概念
+	// 数据源概念标签往往过于宽泛（如"大金融""房地产"），无法反映业务实质
+	// 即使 concepts.json 不存在，也要通过行业推断硬概念
+	profilePath := filepath.Join(dataRoot, symbol, "profile.json")
+	if pdata, err := os.ReadFile(profilePath); err == nil {
+		industry := extractJSONString(pdata, "industry")
+		if industry != "" {
+			if boost, ok := industryConceptBoost[industry]; ok {
+				for _, c := range boost {
+					if _, ok := seen[c]; !ok {
+						seen[c] = struct{}{}
+						result = append(result, c)
 					}
 				}
 			}
-		} else {
-			if _, ok := seen[c]; !ok {
-				seen[c] = struct{}{}
-				result = append(result, c)
-			}
 		}
 	}
+
 	return result
 }
 

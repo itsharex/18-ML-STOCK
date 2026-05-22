@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +73,9 @@ type App struct {
 	// 应用菜单项引用（用于动态更新标题）
 	appMenuScrollItem *menu.MenuItem
 	appMenuIconItem   *menu.MenuItem
+
+	// 全市场缓存管理器（后台更新，用于可比公司推荐等场景）
+	marketCache *downloader.MarketCacheManager
 }
 
 // trayQuoteItem tray 滚动显示用的股票数据
@@ -157,6 +161,18 @@ func (a *App) startup(ctx context.Context) {
 	// 启动后台行业数据采集（如果满足条件）
 	go a.startBackgroundIndustryUpdate()
 
+	// 初始化全市场缓存管理器
+	a.marketCache = downloader.NewMarketCacheManager(a.storage.DataDir())
+	if err := a.marketCache.Load(); err != nil {
+		fmt.Printf("[MarketCache] 加载缓存失败: %v\n", err)
+	}
+	if a.marketCache.IsEmpty() || a.marketCache.IsExpired() {
+		fmt.Printf("[MarketCache] 缓存为空或已过期，启动后台更新...\n")
+		go a.startBackgroundMarketCacheUpdate()
+	} else {
+		fmt.Printf("[MarketCache] 缓存加载成功，共 %d 只股票，最后更新: %s\n", a.marketCache.Len(), a.marketCache.GetAll()[a.stocks[0].Code].UpdatedAt)
+	}
+
 	// 加载应用配置
 	appCfg, err := a.storage.LoadAppConfig()
 	if err != nil {
@@ -188,53 +204,6 @@ func (a *App) startup(ctx context.Context) {
 		}
 	})
 }
-
-// setupApplicationMenu 设置 macOS 顶部应用菜单
-func (a *App) setupApplicationMenu() {
-	appMenu := menu.NewMenu()
-
-	// macOS 应用标准菜单（About, Hide, Quit 等）
-	appMenu.Append(menu.AppMenu())
-
-	// 显示菜单
-	displayMenu := appMenu.AddSubmenu("显示")
-
-	a.appMenuScrollItem = menu.Text("显示/关闭 滚动字幕", nil, func(cd *menu.CallbackData) {
-		enabled := !tray.IsScrollEnabled()
-		tray.SetScrollEnabled(enabled)
-	})
-	displayMenu.Append(a.appMenuScrollItem)
-
-	a.appMenuIconItem = menu.Text("显示/隐藏 菜单图标", nil, func(cd *menu.CallbackData) {
-		visible := !tray.IsIconVisible()
-		tray.SetIconVisible(visible)
-	})
-	displayMenu.Append(a.appMenuIconItem)
-
-	// 如果 tray 图标当前隐藏，禁用滚动字幕选项（无图标则无滚动意义）
-	if !tray.IsIconVisible() {
-		a.appMenuScrollItem.Disable()
-	}
-
-	// 窗口菜单
-	windowItem := menu.WindowMenu()
-	windowItem.Label = "窗口"
-	appMenu.Append(windowItem)
-
-	// 关于菜单
-	aboutMenu := appMenu.AddSubmenu("关于")
-	aboutMenu.Append(menu.Text("关于 StockFinLens", nil, func(cd *menu.CallbackData) {
-		runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
-			Type:    runtime.InfoDialog,
-			Title:   "关于 StockFinLens",
-			Message: "版本 " + a.currentVersion,
-		})
-	}))
-
-	runtime.MenuSetApplicationMenu(a.ctx, appMenu)
-}
-
-
 
 // loadStockDB 从嵌入的资源或数据目录加载股票列表
 func (a *App) loadStockDB() error {
@@ -480,6 +449,86 @@ func (a *App) startBackgroundIndustryUpdate() {
 	if reloadErr := analyzer.ReloadIndustryDatabase(a.storage.DataDir()); reloadErr != nil {
 		fmt.Printf("后台行业数据热重载失败: %v\n", reloadErr)
 	}
+}
+
+// startBackgroundMarketCacheUpdate 后台更新全市场缓存
+// 仅在缓存为空或过期时触发，更新过程不阻塞前台
+func (a *App) startBackgroundMarketCacheUpdate() {
+	if a.marketCache == nil {
+		return
+	}
+	var sflClient *downloader.SFLClient
+	if a.dataRouter != nil {
+		sflClient = a.dataRouter.GetSFLClient()
+	}
+	if sflClient == nil {
+		fmt.Println("[MarketCache] SFL 客户端不可用，跳过后台更新")
+		return
+	}
+
+	fmt.Println("[MarketCache] 开始后台更新全市场缓存...")
+	start := time.Now()
+	err := a.marketCache.UpdateAll(sflClient, func(p downloader.UpdateProgress) {
+		if p.Stage == "done" {
+			fmt.Printf("[MarketCache] 更新完成: %s (耗时 %.1fs)\n", p.Message, time.Since(start).Seconds())
+		} else {
+			fmt.Printf("[MarketCache] %s: %s\n", p.Stage, p.Message)
+		}
+	})
+	if err != nil {
+		fmt.Printf("[MarketCache] 后台更新失败: %v\n", err)
+	}
+}
+
+// GetMarketCacheStatus 获取全市场缓存状态（Wails 绑定）
+func (a *App) GetMarketCacheStatus() map[string]interface{} {
+	if a.marketCache == nil {
+		return map[string]interface{}{
+			"loaded":  false,
+			"count":   0,
+			"expired": true,
+			"message": "缓存管理器未初始化",
+		}
+	}
+	updatedAt := ""
+	if len(a.stocks) > 0 {
+		if item, ok := a.marketCache.Get(a.stocks[0].Code); ok {
+			updatedAt = item.UpdatedAt
+		}
+	}
+	return map[string]interface{}{
+		"loaded":     !a.marketCache.IsEmpty(),
+		"count":      a.marketCache.Len(),
+		"expired":    a.marketCache.IsExpired(),
+		"updated_at": updatedAt,
+	}
+}
+
+// RefreshMarketCache 手动刷新全市场缓存（Wails 绑定）
+func (a *App) RefreshMarketCache() (string, error) {
+	if a.marketCache == nil {
+		return "", fmt.Errorf("缓存管理器未初始化")
+	}
+	var sflClient *downloader.SFLClient
+	if a.dataRouter != nil {
+		sflClient = a.dataRouter.GetSFLClient()
+	}
+	if sflClient == nil {
+		return "", fmt.Errorf("SFL 客户端不可用")
+	}
+
+	go func() {
+		start := time.Now()
+		err := a.marketCache.UpdateAll(sflClient, func(p downloader.UpdateProgress) {
+			fmt.Printf("[MarketCache] %s: %s\n", p.Stage, p.Message)
+		})
+		if err != nil {
+			fmt.Printf("[MarketCache] 手动刷新失败: %v\n", err)
+		} else {
+			fmt.Printf("[MarketCache] 手动刷新完成，耗时 %.1fs\n", time.Since(start).Seconds())
+		}
+	}()
+	return "后台缓存更新已启动", nil
 }
 
 // SearchStocks 根据关键词搜索股票，返回前10条
@@ -3263,10 +3312,32 @@ func (a *App) RecommendComparables(symbol string) ([]analyzer.ComparableRecommen
 		}
 	}
 
-	// 批量补充候选资料的本地缓存（优先本地，缺失的通过网络并发获取）
-	a.batchFetchCandidateProfiles(allSymbols, 200)
+	// 优先使用全市场缓存构建候选池（避免推荐结果局限于自选股）
+	var cacheItems map[string]analyzer.MarketCacheItem
+	if a.marketCache != nil && !a.marketCache.IsEmpty() {
+		cacheItems = make(map[string]analyzer.MarketCacheItem)
+		for _, s := range allSymbols {
+			if item, ok := a.marketCache.Get(s); ok {
+				// 使用带市场后缀的代码（如 000001.SZ）作为 Symbol，保持与前端一致
+				cacheItems[s] = analyzer.MarketCacheItem{
+					Symbol:    s,
+					Name:      item.Name,
+					Industry:  item.Industry,
+					MarketCap: item.MarketCap,
+					ROE:       item.ROE,
+					GM:        item.GrossprofitMargin,
+					Concepts:  item.Concepts,
+				}
+			}
+		}
+		fmt.Printf("[RecommendComparables] 使用全市场缓存，共 %d 只候选\n", len(cacheItems))
+	} else {
+		// 缓存为空时 fallback：批量补充候选资料的本地缓存
+		fmt.Println("[RecommendComparables] 缓存为空，fallback 到本地扫描")
+		a.batchFetchCandidateProfiles(allSymbols, 500)
+	}
 
-	recommendations := analyzer.RecommendComparables(symbol, profile, finData, a.storage.DataDir(), allSymbols, 5)
+	recommendations := analyzer.RecommendComparables(symbol, profile, finData, a.storage.DataDir(), allSymbols, cacheItems, 5)
 	return recommendations, nil
 }
 
@@ -3296,12 +3367,19 @@ func (a *App) batchFetchCandidateProfiles(allSymbols []string, maxFetch int) {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			missing = append(missing, sym)
 		}
-		if len(missing) >= maxFetch {
-			break
-		}
 	}
 	if len(missing) == 0 {
 		return
+	}
+
+	// Fisher-Yates 随机打乱，避免总是补充代码顺序靠前的股票，扩大行业覆盖
+	for i := len(missing) - 1; i > 0; i-- {
+		j := rand.Intn(i + 1)
+		missing[i], missing[j] = missing[j], missing[i]
+	}
+
+	if len(missing) > maxFetch {
+		missing = missing[:maxFetch]
 	}
 
 	// 并发获取（限制并发数 10）

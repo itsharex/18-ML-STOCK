@@ -31,6 +31,11 @@ func NewDataRouter(token string, enabled, useFin, useKline, useQuote, useMF bool
 	return r
 }
 
+// GetSFLClient 获取 SFL 客户端（用于外部组件如缓存管理器直接调用）
+func (r *DataRouter) GetSFLClient() *SFLClient {
+	return r.sflClient
+}
+
 // ========== K线数据路由 ==========
 
 // FetchKlines 获取历史K线，按优先级路由
