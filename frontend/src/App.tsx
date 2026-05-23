@@ -170,7 +170,7 @@ import {
   HasPythonDepsChecked,
   GetSFLConfig,
   RecommendComparables,
-} from '../wailsjs/go/main/App'
+} from './api'
 import type { main, analyzer, downloader } from '../wailsjs/go/models'
 
 type Stock = main.StockInfo
@@ -362,6 +362,7 @@ function App() {
   const [forceAnalyzeOpen, setForceAnalyzeOpen] = useState(false)
   const [lastAnalysisAt, setLastAnalysisAt] = useState('')
   const [trendDrawerCode, setTrendDrawerCode] = useState<string | null>(null)
+  const [klineFullscreen, setKlineFullscreen] = useState(false)
   const [riskRadar, setRiskRadar] = useState<RiskRadarItem[] | null>(null)
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false)
   // Python 依赖检测弹窗
@@ -2594,8 +2595,16 @@ function App() {
           </div>
         ) : selectedStock ? (
           <>
-            <div className="stock-header">
+            <div className="stock-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h1>{selectedStock.name}<span className="stock-sub">{selectedStock.code}</span></h1>
+              <button
+                className="stock-info-refresh"
+                onClick={handleRefreshProfile}
+                title="刷新股票基本信息（行业/PE/PB 等）"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                刷新
+              </button>
             </div>
 
             <div className="stock-info-card">
@@ -2884,6 +2893,35 @@ function App() {
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                   <button
                     className="stock-info-refresh"
+                    onClick={() => setKlineFullscreen(true)}
+                    title="全窗口查看 K线 + 技术指标联动分析图"
+                    disabled={!selectedStock}
+                    style={{
+                      background: '#ef444420',
+                      border: '1px solid #ef444480',
+                      color: '#ef4444',
+                      padding: '3px 10px',
+                      borderRadius: 4,
+                      fontSize: 12,
+                      cursor: selectedStock ? 'pointer' : 'not-allowed',
+                      transition: 'all .15s ease',
+                      opacity: selectedStock ? 1 : 0.5,
+                      whiteSpace: 'nowrap',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!selectedStock) return
+                      e.currentTarget.style.background = '#ef444435'
+                      e.currentTarget.style.borderColor = '#ef4444'
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = '#ef444420'
+                      e.currentTarget.style.borderColor = '#ef444480'
+                    }}
+                  >
+                    K线
+                  </button>
+                  <button
+                    className="stock-info-refresh"
                     onClick={() => setTrendDrawerCode(selectedStock!.code)}
                     title="查看近5年财务指标趋势"
                     style={{
@@ -2895,6 +2933,7 @@ function App() {
                       fontSize: 12,
                       cursor: 'pointer',
                       transition: 'all .15s ease',
+                      whiteSpace: 'nowrap',
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.background = '#10b98135'
@@ -2906,9 +2945,6 @@ function App() {
                     }}
                   >
                     财务趋势
-                  </button>
-                  <button className="stock-info-refresh" onClick={handleRefreshProfile} title="强制刷新">
-                    刷新
                   </button>
                 </div>
               </div>
@@ -3283,9 +3319,10 @@ function App() {
                           key={r.symbol}
                           className="cp-rec-item"
                           onClick={() => handleAddRecommendedComparable(r.symbol)}
+                          title={r.reasons && r.reasons.length > 0 ? r.reasons.join(' · ') : undefined}
                           style={{
                             display: 'flex',
-                            alignItems: 'flex-start',
+                            alignItems: 'center',
                             justifyContent: 'space-between',
                             padding: '4px 6px',
                             borderRadius: 4,
@@ -3306,11 +3343,6 @@ function App() {
                                 <span style={{ color: '#fbbf24' }}>⚠️</span>
                               )}
                             </div>
-                            {r.reasons && r.reasons.length > 0 && (
-                              <div style={{ marginTop: 2, color: '#94a3b8', fontSize: 10, lineHeight: 1.4 }}>
-                                {r.reasons.join(' · ')}
-                              </div>
-                            )}
                           </div>
                           <span style={{ color: '#60a5fa', fontSize: 16, marginLeft: 4, flexShrink: 0 }}>+</span>
                         </div>
@@ -4073,6 +4105,16 @@ function App() {
           code={trendDrawerCode}
           name={selectedStock?.name}
           onClose={() => setTrendDrawerCode(null)}
+        />
+      )}
+
+      {/* 技术图全窗口（K线 + 技术指标联动） */}
+      {klineFullscreen && selectedStock && (
+        <UnifiedChart
+          code={selectedStock.code}
+          quote={quote || undefined}
+          initialExpanded
+          onClose={() => setKlineFullscreen(false)}
         />
       )}
 

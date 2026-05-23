@@ -9,18 +9,10 @@ PLATFORM="${1:-all}"
 BIN_DIR="build/bin"
 mkdir -p "$BIN_DIR"
 
-# Read version from wails.json
+# Read version from wails.json (唯一来源；前端通过 vite define 在构建期注入)
 VERSION=$(grep -o '"productVersion": "[^"]*"' wails.json | cut -d'"' -f4)
 if [ -z "$VERSION" ]; then
     echo "Error: Could not read version from wails.json"
-    exit 1
-fi
-
-# Verify frontend Settings.tsx version matches
-SETTINGS_VERSION=$(grep -o "const version = '[^']*'" frontend/src/Settings.tsx | cut -d"'" -f2)
-if [ "$VERSION" != "$SETTINGS_VERSION" ]; then
-    echo "Error: Version mismatch! wails.json=$VERSION, frontend/src/Settings.tsx=$SETTINGS_VERSION"
-    echo "Please sync the version in frontend/src/Settings.tsx before building."
     exit 1
 fi
 

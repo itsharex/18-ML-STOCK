@@ -10,7 +10,7 @@
 **StockFinLens（股票财报透镜）** 是一款基于 Wails v2 的跨平台桌面股票财报透视分析工具，支持 A 股与港股。它通过多层分析引擎（财报透镜财务透视、A-Score 风险评分、可比公司横向对比、ML 三引擎预测、RIM 估值、技术形态与交易活跃度分析等）生成深度 Markdown 分析报告。
 
 - **模块名**: `github.com/liusaipu/stockfinlens`
-- **当前版本**: `1.3.40`（见 `wails.json` 的 `info.productVersion` 与 `frontend/src/Settings.tsx` 的 `const version`）
+- **当前版本**: `1.3.40`（唯一来源：`wails.json` 的 `info.productVersion`；前端 `Settings.tsx` 通过 Vite `define` 在构建期注入 `__APP_VERSION__`，**不再硬编码**）
 - **本地数据目录**: `~/.config/stock-analyzer/`
 
 ## 技术栈
@@ -126,7 +126,7 @@ stockfinlens/
 │   ├── index.html                # 入口 HTML（lang="zh-CN"，深色背景）
 │   ├── src/
 │   │   ├── App.tsx               # 主界面组件（~3420 行，三栏布局，所有全局状态）
-│   │   ├── Settings.tsx          # 设置面板（版本号来源之二，~440 行）
+│   │   ├── Settings.tsx          # 设置面板（版本号通过 vite define 注入 `__APP_VERSION__`，~440 行）
 │   │   ├── UnifiedChart.tsx      # K线统一图表（ECharts，5 格子图：K线+成交量+MACD+RSI+布林带）
 │   │   ├── KlineChart.tsx        # K线迷你图表（lightweight-charts）
 │   │   ├── indicatorCharts.tsx   # 技术指标子图（MACD/RSI/布林带，lightweight-charts）
@@ -244,7 +244,7 @@ go test ./downloader/...
 
 ### 构建注意事项
 
-1. **版本号一致性（硬要求）**: `wails.json` 中的 `info.productVersion` 必须与 `frontend/src/Settings.tsx` 中的 `const version` 完全一致。两个构建脚本都会校验此项，不一致会**中断构建**。当前版本为 `1.3.40`。
+1. **版本号唯一来源**: `wails.json` 中的 `info.productVersion` 是应用版本的**唯一来源**。前端通过 `frontend/vite.config.ts` 在构建期读取并以 `define` 注入全局常量 `__APP_VERSION__`，`Settings.tsx` 直接引用该常量，**禁止重新硬编码**。构建脚本不再做一致性校验（自然一致）。当前版本为 `1.3.40`。
 2. **前端 dist 重建**: 如果前端代码有变更，构建前必须确保 `frontend/dist` 是最新的。Wails `build` 在 `dist` 已存在时可能跳过前端构建，导致打包旧代码。建议手动执行 `cd frontend && npm run build`。
 3. **打包产物必须包含**: `ml_models/` 和 `scripts/` 目录。Go 后端在运行时会从可执行文件同级目录查找这些路径。
 4. **开发模式 vs 生产模式**: `main.go` 中 `readStockJSON()` 优先读取本地 `data/stocks.json`，打包后 fallback 到 `embed.FS`。
@@ -450,7 +450,7 @@ Python 脚本与模型文件的路径解析采用 **4 级回退**：
 
 ## 发布流程
 
-1. **版本号同步**: 确保 `wails.json` 与 `frontend/src/Settings.tsx` 版本一致。
+1. **版本号更新**: 仅需修改 `wails.json` 的 `info.productVersion`（前端构建时自动注入）。
 2. **更新 CHANGELOG.md**: 在顶部追加新版本说明。
 3. **完整回归测试（硬性要求）**:
    ```bash

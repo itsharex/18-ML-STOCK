@@ -1,6 +1,8 @@
 package downloader
 
 import (
+	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -40,7 +42,7 @@ type FinancialReportData struct {
 // DownloadFinancialReports 从东方财富下载指定股票的所有年报财务数据
 // 东方财富失败时自动尝试腾讯财经作为备用数据源
 // maxYears 可选，默认为 5 年
-func DownloadFinancialReports(market, code string, maxYears ...int) (*FinancialReportData, error) {
+func DownloadFinancialReports(ctx context.Context, market, code string, maxYears ...int) (*FinancialReportData, error) {
 	limit := 5
 	if len(maxYears) > 0 && maxYears[0] > 0 {
 		limit = maxYears[0]
@@ -56,13 +58,13 @@ func DownloadFinancialReports(market, code string, maxYears ...int) (*FinancialR
 	}
 
 	// 先尝试东方财富
-	result, err := downloadFromEastMoney(market, code, limit)
+	result, err := downloadFromEastMoney(ctx, market, code, limit)
 	if err == nil {
 		return result, nil
 	}
 
 	// 东方财富失败，尝试腾讯财经
-	result, err2 := DownloadFromTencent(market, code)
+	result, err2 := DownloadFromTencent(ctx, market, code)
 	if err2 == nil {
 		return result, nil
 	}
@@ -72,25 +74,25 @@ func DownloadFinancialReports(market, code string, maxYears ...int) (*FinancialR
 }
 
 // downloadFromEastMoney 从东方财富下载财务数据
-func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportData, error) {
+func downloadFromEastMoney(ctx context.Context, market, code string, maxYears int) (*FinancialReportData, error) {
 	fullCode := market + code // e.g. SH603501
 
 	// 1. 分别为三张表确定 companyType（保险/金融股各表可能不同）
-	bsCT, err := getCompanyTypeForEndpoint("zcfzbAjaxNew", fullCode)
+	bsCT, err := getCompanyTypeForEndpoint(ctx, "zcfzbAjaxNew", fullCode)
 	if err != nil {
 		return nil, fmt.Errorf("无法确定资产负债表类型: %w\n可能原因: 网络连接问题或股票代码不存在", err)
 	}
-	isCT, err := getCompanyTypeForEndpoint("lrbAjaxNew", fullCode)
+	isCT, err := getCompanyTypeForEndpoint(ctx, "lrbAjaxNew", fullCode)
 	if err != nil {
 		return nil, fmt.Errorf("无法确定利润表类型: %w\n可能原因: 网络连接问题或股票代码不存在", err)
 	}
-	cfCT, err := getCompanyTypeForEndpoint("xjllbAjaxNew", fullCode)
+	cfCT, err := getCompanyTypeForEndpoint(ctx, "xjllbAjaxNew", fullCode)
 	if err != nil {
 		return nil, fmt.Errorf("无法确定现金流量表类型: %w\n可能原因: 网络连接问题或股票代码不存在", err)
 	}
 
 	// 2. 获取所有报告日期（年报+季报）
-	allDates, err := getReportDates(code, maxYears)
+	allDates, err := getReportDates(ctx, code, maxYears)
 	if err != nil {
 		return nil, fmt.Errorf("获取报告日期列表失败: %w\n可能原因: 网络连接不稳定或该股票暂无财务数据", err)
 	}
@@ -119,7 +121,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 		wg.Add(1)
 		go func(d string) {
 			defer wg.Done()
-			data, err := fetchHSF10("zcfzbAjaxNew", bsCT, d, fullCode)
+			data, err := fetchHSF10(ctx, "zcfzbAjaxNew", bsCT, d, fullCode)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Sprintf("资产负债表[%s]: %v", d, err))
@@ -136,7 +138,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 		wg.Add(1)
 		go func(d string) {
 			defer wg.Done()
-			data, err := fetchHSF10("lrbAjaxNew", isCT, d, fullCode)
+			data, err := fetchHSF10(ctx, "lrbAjaxNew", isCT, d, fullCode)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Sprintf("利润表[%s]: %v", d, err))
@@ -153,7 +155,7 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 		wg.Add(1)
 		go func(d string) {
 			defer wg.Done()
-			data, err := fetchHSF10("xjllbAjaxNew", cfCT, d, fullCode)
+			data, err := fetchHSF10(ctx, "xjllbAjaxNew", cfCT, d, fullCode)
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, fmt.Sprintf("现金流量表[%s]: %v", d, err))
@@ -185,20 +187,20 @@ func downloadFromEastMoney(market, code string, maxYears int) (*FinancialReportD
 
 // FetchCashFlowDividendFromEastMoney 从东方财富现金流量表获取分红支出数据
 // 用于补充其他数据源（如StockFinLens）缺失的分红字段
-func FetchCashFlowDividendFromEastMoney(market, code string, maxYears int) (map[string]float64, error) {
+func FetchCashFlowDividendFromEastMoney(ctx context.Context, market, code string, maxYears int) (map[string]float64, error) {
 	if maxYears <= 0 {
 		maxYears = 5
 	}
 	fullCode := market + code
 
 	// 1. 确定现金流量表类型
-	cfCT, err := getCompanyTypeForEndpoint("xjllbAjaxNew", fullCode)
+	cfCT, err := getCompanyTypeForEndpoint(ctx, "xjllbAjaxNew", fullCode)
 	if err != nil {
 		return nil, fmt.Errorf("无法确定现金流量表类型: %w", err)
 	}
 
 	// 2. 获取年报日期列表
-	allDates, err := getReportDates(code, maxYears)
+	allDates, err := getReportDates(ctx, code, maxYears)
 	if err != nil {
 		return nil, fmt.Errorf("获取报告日期失败: %w", err)
 	}
@@ -206,7 +208,7 @@ func FetchCashFlowDividendFromEastMoney(market, code string, maxYears int) (map[
 
 	result := make(map[string]float64)
 	for _, d := range dates {
-		data, err := fetchHSF10("xjllbAjaxNew", cfCT, d, fullCode)
+		data, err := fetchHSF10(ctx, "xjllbAjaxNew", cfCT, d, fullCode)
 		if err != nil {
 			continue
 		}
@@ -225,12 +227,12 @@ func FetchCashFlowDividendFromEastMoney(market, code string, maxYears int) (map[
 }
 
 // getCompanyTypeForEndpoint 尝试多个 companyType 直到指定 endpoint 返回有效数据
-func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
+func getCompanyTypeForEndpoint(ctx context.Context, endpoint, fullCode string) (int, error) {
 	companyTypes := []int{4, 1, 2, 3, 5, 6, 7, 8}
 	var lastErr error
 
 	for _, ct := range companyTypes {
-		data, err := fetchHSF10(endpoint, ct, "2024-12-31", fullCode)
+		data, err := fetchHSF10(ctx, endpoint, ct, "2024-12-31", fullCode)
 		if err != nil {
 			lastErr = err
 			continue
@@ -248,7 +250,7 @@ func getCompanyTypeForEndpoint(endpoint, fullCode string) (int, error) {
 
 // getAnnualReportDates 通过 datacenter-web API 获取所有年报日期（带重试）
 // getReportDates 获取所有报告日期（年报+季报），返回降序排列
-func getReportDates(code string, maxYears int) ([]string, error) {
+func getReportDates(ctx context.Context, code string, maxYears int) ([]string, error) {
 	url := fmt.Sprintf("%s?sortColumns=REPORT_DATE&sortTypes=-1&pageSize=500&pageNumber=1&reportName=RPT_DMSK_FN_BALANCE&columns=REPORT_DATE&source=WEB&filter=(SECURITY_CODE=\"%s\")", dcBaseURL, code)
 	url = strings.ReplaceAll(url, `"`, "%22")
 
@@ -256,11 +258,11 @@ func getReportDates(code string, maxYears int) ([]string, error) {
 	var err error
 
 	// 尝试主API
-	resp, err = httpGetWithReferer(url, "https://data.eastmoney.com/")
+	resp, err = httpGetWithReferer(ctx, url, "https://data.eastmoney.com/")
 	if err != nil {
 		// 尝试备用接口
 		backupURL := fmt.Sprintf("https://datacenter-web.eastmoney.com/api/data/v1/get?sortColumns=REPORT_DATE&sortTypes=-1&pageSize=100&pageNumber=1&reportName=RPT_FCI_PERFORMANCEE&columns=REPORT_DATE&filter=(SECURITY_CODE=\"%s\")", code)
-		resp, err = httpGetWithRetry(backupURL, "https://data.eastmoney.com/", 2)
+		resp, err = httpGetWithRetry(ctx, backupURL, "https://data.eastmoney.com/", 2)
 		if err != nil {
 			return nil, fmt.Errorf("主API和备用API均失败: %w", err)
 		}
@@ -319,9 +321,9 @@ func filterAnnualDates(dates []string) []string {
 	return annuals
 }
 
-func fetchHSF10(endpoint string, companyType int, date, fullCode string) (map[string]any, error) {
+func fetchHSF10(ctx context.Context, endpoint string, companyType int, date, fullCode string) (map[string]any, error) {
 	url := fmt.Sprintf("%s/%s?companyType=%d&reportDateType=0&reportType=1&dates=%s&code=%s", hsf10BaseURL, endpoint, companyType, date, fullCode)
-	resp, err := httpGetWithReferer(url, "https://emweb.securities.eastmoney.com/")
+	resp, err := httpGetWithReferer(ctx, url, "https://emweb.securities.eastmoney.com/")
 	if err != nil {
 		return nil, err
 	}
@@ -337,12 +339,14 @@ func fetchHSF10(endpoint string, companyType int, date, fullCode string) (map[st
 }
 
 // httpGetWithReferer 带重试机制的HTTP GET请求
-func httpGetWithReferer(url, referer string) ([]byte, error) {
-	return httpGetWithRetry(url, referer, 3)
+func httpGetWithReferer(ctx context.Context, url, referer string) ([]byte, error) {
+	return httpGetWithRetry(ctx, url, referer, 3)
 }
 
 // httpGetWithRetry 带重试的HTTP GET请求
-func httpGetWithRetry(url, referer string, maxRetries int) ([]byte, error) {
+// 此函数保留独立的 DisableKeepAlives client：东财部分反爬路径会主动关闭 keep-alive
+// 复用连接，导致 EOF。其它东财调用一律走 HTTPGet 复用 sharedTransport。
+func httpGetWithRetry(ctx context.Context, url, referer string, maxRetries int) ([]byte, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -350,21 +354,26 @@ func httpGetWithRetry(url, referer string, maxRetries int) ([]byte, error) {
 			// 指数退避 + 随机抖动：避免同步请求风暴，也避免被服务端限流识别为固定节奏
 			baseDelay := time.Duration(1<<attempt) * time.Second // 1s, 2s, 4s, 8s...
 			jitter := time.Duration(rand.Intn(500)+100) * time.Millisecond
-			time.Sleep(baseDelay + jitter)
+			select {
+			case <-time.After(baseDelay + jitter):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
 
 		// 禁用 Keep-Alive，避免复用被服务端单方面关闭的陈旧连接导致 EOF
 		client := &http.Client{
-			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
 				DisableKeepAlives: true,
 			},
 		}
-		req, err := http.NewRequest("GET", url, nil)
+		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		req, err := http.NewRequestWithContext(rctx, "GET", url, nil)
 		if err != nil {
+			cancel()
 			return nil, err
 		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("User-Agent", defaultUA)
 		req.Header.Set("Referer", referer)
 		req.Header.Set("Accept", "application/json, text/plain, */*")
 		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
@@ -372,12 +381,14 @@ func httpGetWithRetry(url, referer string, maxRetries int) ([]byte, error) {
 
 		resp, err := client.Do(req)
 		if err != nil {
+			cancel()
 			lastErr = fmt.Errorf("尝试 %d: 请求失败: %w", attempt+1, err)
 			continue
 		}
 
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		cancel()
 
 		if err != nil {
 			lastErr = fmt.Errorf("尝试 %d: 读取响应失败: %w", attempt+1, err)
@@ -455,13 +466,13 @@ type StockQuote struct {
 }
 
 // FetchStockProfile 获取股票基本资料（东方财富公司概况 + 腾讯行情补充数值）
-func FetchStockProfile(market, code string) (*StockProfile, error) {
+func FetchStockProfile(ctx context.Context, market, code string) (*StockProfile, error) {
 	profile := &StockProfile{}
 
 	// 数据源1：HSF10 公司概况（行业、董事长、实控人、上市日期）
 	csCode := toCsCode(market, code)
 	csURL := fmt.Sprintf("https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code=%s", csCode)
-	if csBody, csErr := httpGetWithReferer(csURL, "https://emweb.securities.eastmoney.com/"); csErr == nil {
+	if csBody, csErr := httpGetWithReferer(ctx, csURL, "https://emweb.securities.eastmoney.com/"); csErr == nil {
 		var csResp struct {
 			Jbzl struct {
 				Sshy string `json:"sshy"`
@@ -491,7 +502,7 @@ func FetchStockProfile(market, code string) (*StockProfile, error) {
 
 	// 数据源2：高管管理信息（国籍）
 	mgmtURL := fmt.Sprintf("https://emweb.securities.eastmoney.com/PC_HSF10/CompanyManagement/CompanyManagementAjax?code=%s", csCode)
-	if mgmtBody, mgmtErr := httpGetWithReferer(mgmtURL, "https://emweb.securities.eastmoney.com/"); mgmtErr == nil {
+	if mgmtBody, mgmtErr := httpGetWithReferer(ctx, mgmtURL, "https://emweb.securities.eastmoney.com/"); mgmtErr == nil {
 		var mgmtResp struct {
 			RptManagerList []struct {
 				XM string `json:"xm"`
@@ -532,18 +543,18 @@ func FetchStockProfile(market, code string) (*StockProfile, error) {
 				if pa, ok := knownTaiwanPoliticalMap[targetName]; ok && pa != "" {
 					profile.PoliticalAffiliation = pa
 				} else {
-					profile.PoliticalAffiliation = inferPoliticalAffiliationFromBaike(targetName)
+					profile.PoliticalAffiliation = inferPoliticalAffiliationFromBaike(ctx, targetName)
 				}
 			}
 			// 若籍属仍为空，尝试从百度百科查找
 			if profile.ChairmanNationality == "" && targetName != "" {
-				profile.ChairmanNationality = inferNationalityFromBaike(targetName)
+				profile.ChairmanNationality = inferNationalityFromBaike(ctx, targetName)
 			}
 		}
 	}
 
 	// 数据源3：腾讯行情接口补充市值、PE、PB 等数值字段
-	if q, err := fetchQuoteFromTencent(market, code); err == nil && q != nil {
+	if q, err := fetchQuoteFromTencent(ctx, market, code); err == nil && q != nil {
 		if profile.MarketCap == 0 && q.MarketCap > 0 {
 			profile.MarketCap = q.MarketCap
 		}
@@ -675,12 +686,12 @@ var knownTaiwanPoliticalMap = map[string]string{
 }
 
 // inferPoliticalAffiliationFromBaike 尝试从百度百科页面推断人物蓝绿属性
-func inferPoliticalAffiliationFromBaike(name string) string {
+func inferPoliticalAffiliationFromBaike(ctx context.Context, name string) string {
 	if name == "" {
 		return ""
 	}
 	baikeURL := fmt.Sprintf("https://baike.baidu.com/item/%s", url.QueryEscape(name))
-	body, err := httpGetWithReferer(baikeURL, "https://baike.baidu.com/")
+	body, err := httpGetWithReferer(ctx, baikeURL, "https://baike.baidu.com/")
 	if err != nil {
 		return ""
 	}
@@ -710,12 +721,12 @@ func inferPoliticalAffiliationFromBaike(name string) string {
 }
 
 // inferNationalityFromBaike 尝试从百度百科页面推断人物国籍/籍属
-func inferNationalityFromBaike(name string) string {
+func inferNationalityFromBaike(ctx context.Context, name string) string {
 	if name == "" {
 		return ""
 	}
 	baikeURL := fmt.Sprintf("https://baike.baidu.com/item/%s", url.QueryEscape(name))
-	body, err := httpGetWithReferer(baikeURL, "https://baike.baidu.com/")
+	body, err := httpGetWithReferer(ctx, baikeURL, "https://baike.baidu.com/")
 	if err != nil {
 		return ""
 	}
@@ -787,10 +798,10 @@ func inferNationalityFromBaike(name string) string {
 }
 
 // FetchStockQuote 获取股票实时行情，先尝试腾讯财经，再东方财富
-func FetchStockQuote(market, code string) (*StockQuote, error) {
+func FetchStockQuote(ctx context.Context, market, code string) (*StockQuote, error) {
 	// 1. 腾讯财经（当前网络环境下最稳定）
 	fmt.Printf("[FetchStockQuote] trying Tencent for %s.%s\n", market, code)
-	quote, err := fetchQuoteFromTencent(market, code)
+	quote, err := fetchQuoteFromTencent(ctx, market, code)
 	if err == nil && quote != nil && quote.CurrentPrice > 0 {
 		fmt.Printf("[FetchStockQuote] Tencent returned quote for %s.%s, price=%.2f\n", market, code, quote.CurrentPrice)
 		return quote, nil
@@ -813,7 +824,7 @@ func FetchStockQuote(market, code string) (*StockQuote, error) {
 	}
 	url := fmt.Sprintf("http://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f2,f3,f4,f5,f6,f7,f8,f10,f15,f16,f17,f18,f20,f21,f9,f23,f133", secid)
 	fmt.Printf("[FetchStockQuote] trying EastMoney: %s\n", url)
-	body, err := httpGetWithReferer(url, "https://quote.eastmoney.com/")
+	body, err := httpGetWithReferer(ctx, url, "https://quote.eastmoney.com/")
 	if err == nil {
 		var resp struct {
 			Data map[string]any `json:"data"`
@@ -852,17 +863,12 @@ func FetchStockQuote(market, code string) (*StockQuote, error) {
 	return nil, fmt.Errorf("所有行情数据源均不可用 (腾讯/东财)")
 }
 
-func fetchQuoteFromTencent(market, code string) (*StockQuote, error) {
+func fetchQuoteFromTencent(ctx context.Context, market, code string) (*StockQuote, error) {
 	prefix := strings.ToLower(market)
 	url := fmt.Sprintf("http://qt.gtimg.cn/q=%s%s", prefix, code)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,10 +1117,10 @@ type KlineData struct {
 }
 
 // FetchStockKlines 获取股票历史K线数据（日K），先尝试腾讯财经，再网易财经，最后东方财富
-func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
+func FetchStockKlines(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
 	// 1. 腾讯财经 HTTPS（当前网络环境下最稳定）
 	fmt.Printf("[FetchStockKlines] trying Tencent for %s.%s, limit=%d\n", market, code, limit)
-	klines, err := fetchKlinesFromTencent(market, code, limit)
+	klines, err := fetchKlinesFromTencent(ctx, market, code, limit)
 	if err == nil && len(klines) > 0 {
 		fmt.Printf("[FetchStockKlines] Tencent returned %d klines for %s.%s\n", len(klines), market, code)
 		return klines, nil
@@ -1125,7 +1131,7 @@ func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
 
 	// 2. 网易财经 CSV
 	fmt.Printf("[FetchStockKlines] trying NetEase for %s.%s\n", market, code)
-	klines, err = fetchKlinesFromNetEase(market, code, limit)
+	klines, err = fetchKlinesFromNetEase(ctx, market, code, limit)
 	if err == nil && len(klines) > 0 {
 		fmt.Printf("[FetchStockKlines] NetEase returned %d klines for %s.%s\n", len(klines), market, code)
 		return klines, nil
@@ -1148,7 +1154,7 @@ func FetchStockKlines(market, code string, limit int) ([]KlineData, error) {
 	}
 	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?ut=fa5fd1943c7b386f172d6893dbfba10b&secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116&klt=101&fqt=1&beg=0&end=20500101&rtntype=6&lmt=%d", secid, limit)
 	fmt.Printf("[FetchStockKlines] trying EastMoney: %s\n", url)
-	body, err := httpGetWithReferer(url, "https://quote.eastmoney.com/")
+	body, err := httpGetWithReferer(ctx, url, "https://quote.eastmoney.com/")
 	if err == nil {
 		var resp struct {
 			Data struct {
@@ -1256,7 +1262,7 @@ func detectEastMoneyOffset(firstLine string) int {
 	return 0
 }
 
-func fetchKlinesFromTencent(market, code string, limit int) ([]KlineData, error) {
+func fetchKlinesFromTencent(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
 	prefix := strings.ToLower(market)
 	isHK := strings.ToUpper(market) == "HK"
 	var url string
@@ -1266,26 +1272,39 @@ func fetchKlinesFromTencent(market, code string, limit int) ([]KlineData, error)
 	} else {
 		url = fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,day,,,%d,qfq", prefix, code, limit)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	// 先用 RawMessage 接住 data，区分 A 股(map) 和港股(可能 array / null) 两种 schema，
+	// 避免对未知 schema 直接 Unmarshal panic 中断 fallback 链
+	var envelope struct {
+		Code int             `json:"code"`
+		Msg  string          `json:"msg"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, err
+	}
+	if envelope.Code != 0 {
+		return nil, fmt.Errorf("Tencent kline error code=%d msg=%s", envelope.Code, envelope.Msg)
+	}
+	// 检测 data 是 map 还是其它形式;非 map 时直接 graceful 报错让 fallback 继续
+	trimmedData := bytes.TrimSpace(envelope.Data)
+	if len(trimmedData) == 0 || trimmedData[0] != '{' {
+		return nil, fmt.Errorf("Tencent kline unsupported data schema (likely HK or empty)")
 	}
 
 	var result struct {
-		Code int `json:"code"`
 		Data map[string]struct {
 			QfqDay [][]any `json:"qfqday"`
 			Day    [][]any `json:"day"`
-		} `json:"data"`
+		}
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal([]byte(`{"Data":`+string(envelope.Data)+`}`), &result); err != nil {
 		return nil, err
 	}
 
@@ -1337,7 +1356,7 @@ func fetchKlinesFromTencent(market, code string, limit int) ([]KlineData, error)
 	return klines, nil
 }
 
-func fetchKlinesFromNetEase(market, code string, limit int) ([]KlineData, error) {
+func fetchKlinesFromNetEase(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
 	if strings.ToUpper(market) == "HK" {
 		return nil, fmt.Errorf("网易财经暂不支持港股K线")
 	}
@@ -1351,15 +1370,15 @@ func fetchKlinesFromNetEase(market, code string, limit int) ([]KlineData, error)
 	start := time.Now().AddDate(-1, 0, 0).Format("20060102")
 	url := fmt.Sprintf("http://quotes.money.163.com/service/chddata.html?code=%s&start=%s&end=%s&fields=TCLOSE;HIGH;LOW;TOPEN;LCLOSE;VOTURNOVER;VATURNOVER", neteaseCode, start, end)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
 	// 网易返回 GB2312 编码的 CSV
-	reader := transform.NewReader(resp.Body, simplifiedchinese.GBK.NewDecoder())
+	reader := transform.NewReader(bytes.NewReader(body), simplifiedchinese.GBK.NewDecoder())
 	csvReader := csv.NewReader(reader)
 	csvReader.LazyQuotes = true
 	records, err := csvReader.ReadAll()

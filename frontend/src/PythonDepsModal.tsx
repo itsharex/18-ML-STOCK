@@ -4,7 +4,7 @@ import {
   CheckPythonDependencies,
   InstallPythonDependencies,
   MarkPythonDepsChecked,
-} from '../wailsjs/go/main/App'
+} from './api'
 import type { main } from '../wailsjs/go/models'
 import { EventsOn, EventsOff } from '../wailsjs/runtime'
 

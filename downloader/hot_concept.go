@@ -1,11 +1,10 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,20 +78,20 @@ func SetSFLHotConceptClient(client *SFLClient) {
 
 // FetchHotConceptBoard 获取当日热门概念看板（综合排序）
 // dataDir 用于缓存；topN 返回前 N 个概念，若 <=0 则返回全部
-func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
+func FetchHotConceptBoard(ctx context.Context, dataDir string, topN int) (*HotConceptBoard, error) {
 	// 1. 检查缓存
 	if board, ok := loadHotConceptCache(dataDir); ok {
 		return board, nil
 	}
 
 	// 2. 请求东财 API
-	concepts, err := fetchConceptBoardFromEastMoney()
+	concepts, err := fetchConceptBoardFromEastMoney(ctx)
 	dataSource := "eastmoney"
 
 	// 3. 东财失败，尝试 StockFinLens 同花顺热搜降级
 	if err != nil && sflHotConceptClient != nil {
 		fmt.Printf("[HotConcept] EastMoney failed (%v), trying StockFinLens ths_hot...\n", err)
-		if sflConcepts, tErr := fetchHotConceptsFromSFL(sflHotConceptClient); tErr == nil && len(sflConcepts) > 0 {
+		if sflConcepts, tErr := fetchHotConceptsFromSFL(ctx, sflHotConceptClient); tErr == nil && len(sflConcepts) > 0 {
 			concepts = sflConcepts
 			dataSource = "stockfinlens"
 			err = nil
@@ -137,8 +136,8 @@ func FetchHotConceptBoard(dataDir string, topN int) (*HotConceptBoard, error) {
 }
 
 // fetchHotConceptsFromSFL 通过 SFL 同花顺热搜获取热点概念
-func fetchHotConceptsFromSFL(client *SFLClient) ([]HotConcept, error) {
-	items, err := client.FetchThsHot("")
+func fetchHotConceptsFromSFL(ctx context.Context, client *SFLClient) ([]HotConcept, error) {
+	items, err := client.FetchThsHot(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("ths_hot 请求失败: %w", err)
 	}
@@ -268,7 +267,7 @@ func FetchHotConceptHistory(dataDir string, days int) ([]HotConceptHistoryItem, 
 }
 
 // FetchConceptConstituents 获取某概念板块的成分股列表
-func FetchConceptConstituents(conceptCode string) ([]ConceptConstituent, error) {
+func FetchConceptConstituents(ctx context.Context, conceptCode string) ([]ConceptConstituent, error) {
 	// 演示数据优先：当概念列表使用演示数据时，成分股也用演示数据，
 	// 避免用演示数据的假代码去查东财真API（代码映射不匹配会导致成分股完全错误）
 	if mock := getMockConstituents(conceptCode); len(mock) > 0 {
@@ -281,7 +280,7 @@ func FetchConceptConstituents(conceptCode string) ([]ConceptConstituent, error) 
 		time.Now().UnixMilli(),
 	)
 
-	body, err := httpGetEastMoney(url)
+	body, err := httpGetEastMoney(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("成分股 API 请求失败: %w", err)
 	}
@@ -402,8 +401,8 @@ func stripJSONP(body []byte) []byte {
 	return body
 }
 
-// httpGetEastMoney 东财专用 HTTP GET（不禁用 Keep-Alives，避免 EOF）
-func httpGetEastMoney(url string) ([]byte, error) {
+// httpGetEastMoney 东财专用 HTTP GET：多个 CDN 节点轮询，统一使用共享 client。
+func httpGetEastMoney(ctx context.Context, url string) ([]byte, error) {
 	// 尝试多个东财CDN节点
 	urls := []string{url}
 	// 如果原始URL包含 push2.eastmoney.com，额外尝试 31-50 号CDN
@@ -413,28 +412,14 @@ func httpGetEastMoney(url string) ([]byte, error) {
 		}
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	for _, u := range urls {
-		req, err := http.NewRequest("GET", u, nil)
-		if err != nil {
-			continue
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36")
-		req.Header.Set("Referer", "https://quote.eastmoney.com/")
-		req.Header.Set("Accept", "*/*")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
-		req.Header.Set("Connection", "keep-alive")
-
-		resp, err := client.Do(req)
-		if err != nil {
-			continue
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			continue
-		}
-		if resp.StatusCode == http.StatusOK && len(body) > 0 {
+		rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		body, err := HTTPGet(rctx, u,
+			WithReferer("https://quote.eastmoney.com/"),
+			WithHeader("Accept", "*/*"),
+		)
+		cancel()
+		if err == nil && len(body) > 0 {
 			return body, nil
 		}
 	}
@@ -443,7 +428,7 @@ func httpGetEastMoney(url string) ([]byte, error) {
 
 // ========== 内部：东财 API 封装 ==========
 
-func fetchConceptBoardFromEastMoney() ([]HotConcept, error) {
+func fetchConceptBoardFromEastMoney(ctx context.Context) ([]HotConcept, error) {
 	url := fmt.Sprintf(
 		"http://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f3&fs=%s&fields=%s&_=%d",
 		emFSConcept,
@@ -451,7 +436,7 @@ func fetchConceptBoardFromEastMoney() ([]HotConcept, error) {
 		time.Now().UnixMilli(),
 	)
 
-	body, err := httpGetEastMoney(url)
+	body, err := httpGetEastMoney(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("请求概念板块失败: %w", err)
 	}

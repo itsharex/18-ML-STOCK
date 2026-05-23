@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -39,67 +40,137 @@ func (r *DataRouter) GetSFLClient() *SFLClient {
 // ========== K线数据路由 ==========
 
 // FetchKlines 获取历史K线，按优先级路由
-func (r *DataRouter) FetchKlines(market, code string, limit int) ([]KlineData, error) {
-	// 1. StockFinLens 数据源（如果启用）
+//
+// limit 语义说明:
+//   - SFL 启用时:忽略 limit,返回**上市以来全部历史**(内部分批,处理 tushare 单次上限)
+//   - SFL 未启用时:limit 表示兜底链路向远端请求的条数(实际返回可能略少)
+func (r *DataRouter) FetchKlines(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
+	// 1. StockFinLens 数据源:拉上市以来全部
 	if r.sflEnabled && r.useForKline && r.sflClient != nil {
-		end := time.Now().Format("20060102")
-		start := time.Now().AddDate(-2, 0, 0).Format("20060102")
-		if klines, err := r.sflClient.FetchDaily(market, code, start, end); err == nil && len(klines) > 0 {
-			fmt.Printf("[DataRouter] Klines from StockFinLens: %d bars for %s.%s\n", len(klines), market, code)
-			if len(klines) > limit {
-				return klines[len(klines)-limit:], nil
-			}
+		klines, err := r.fetchAllSFLKlines(ctx, market, code)
+		if err == nil && len(klines) > 0 {
+			fmt.Printf("[DataRouter] Klines from StockFinLens (full history): %d bars for %s.%s\n", len(klines), market, code)
 			return klines, nil
+		}
+		if err != nil {
+			fmt.Printf("[DataRouter] SFL klines failed for %s.%s: %v, falling back\n", market, code, err)
 		}
 	}
 
 	// 2. 腾讯财经
 	fmt.Printf("[DataRouter] Klines fallback to Tencent for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromTencent(market, code, limit); err == nil && len(klines) > 0 {
+	if klines, err := fetchKlinesFromTencent(ctx, market, code, limit); err == nil && len(klines) > 0 {
 		return klines, nil
 	}
 
 	// 3. 网易财经
 	fmt.Printf("[DataRouter] Klines fallback to NetEase for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromNetEase(market, code, limit); err == nil && len(klines) > 0 {
+	if klines, err := fetchKlinesFromNetEase(ctx, market, code, limit); err == nil && len(klines) > 0 {
 		return klines, nil
 	}
 
 	// 4. Yahoo Finance
 	fmt.Printf("[DataRouter] Klines fallback to Yahoo for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromYahoo(market, code, limit); err == nil && len(klines) > 0 {
+	if klines, err := fetchKlinesFromYahoo(ctx, market, code, limit); err == nil && len(klines) > 0 {
 		return klines, nil
 	}
 
 	// 5. 东方财富（最后兜底）
 	fmt.Printf("[DataRouter] Klines fallback to EastMoney for %s.%s\n", market, code)
-	return FetchStockKlines(market, code, limit)
+	return FetchStockKlines(ctx, market, code, limit)
+}
+
+// fetchAllSFLKlines 分批拉取 SFL 全部历史 K 线。
+// tushare daily 接口单次最多返回 6000 条;对超过该范围的老股，按 end_date 向前回滚分批拉，
+// 直到返回数据不再前推(到达上市日)或达到防御性上限。
+func (r *DataRouter) fetchAllSFLKlines(ctx context.Context, market, code string) ([]KlineData, error) {
+	const (
+		startDate       = "19900101" // A 股市场启动日，覆盖所有可能上市股票
+		maxIterations   = 5          // 防御上限:5 × 6000 = 30000 条 ≈ 120 年，远超任何股票
+		progressLowMark = 1000       // 单次返回少于此数视为已到底
+	)
+
+	var all []KlineData
+	endDate := time.Now().Format("20060102")
+	prevEarliest := ""
+
+	for i := 0; i < maxIterations; i++ {
+		batch, err := r.sflClient.FetchDaily(ctx, market, code, startDate, endDate)
+		if err != nil {
+			// 已有部分数据则吞掉后续错误,返回已拿到的部分
+			if len(all) > 0 {
+				return all, nil
+			}
+			return nil, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+
+		// FetchDaily 内部已反转为时间升序，batch[0] 是这一批最早一天
+		earliest := batch[0].Time
+
+		// 进度检测:同一日期连续两次出现意味着拉不动了
+		if earliest == prevEarliest {
+			break
+		}
+		prevEarliest = earliest
+
+		// 旧数据 prepend 到 all 前面
+		all = append(batch, all...)
+
+		// 这一批显著少于上限 → 已经到底(上市日)
+		if len(batch) < progressLowMark {
+			break
+		}
+
+		// 准备下一次:end_date = earliest - 1 天
+		prev, err := dateBefore(earliest)
+		if err != nil || prev <= startDate {
+			break
+		}
+		endDate = prev
+	}
+
+	return all, nil
+}
+
+// dateBefore 给 K线 Time 字段(YYYYMMDD 或 YYYY-MM-DD 格式)减一天，返回 YYYYMMDD 格式。
+// tushare 的 trade_date 是 YYYYMMDD;东财/网易等其它源是 YYYY-MM-DD;都要兼容。
+func dateBefore(s string) (string, error) {
+	layouts := []string{"20060102", "2006-01-02"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.AddDate(0, 0, -1).Format("20060102"), nil
+		}
+	}
+	return "", fmt.Errorf("unrecognized date format: %s", s)
 }
 
 // ========== 实时行情路由 ==========
 
 // FetchQuote 获取实时行情，按优先级路由
-func (r *DataRouter) FetchQuote(market, code string) (*StockQuote, error) {
+func (r *DataRouter) FetchQuote(ctx context.Context, market, code string) (*StockQuote, error) {
 	// 实时行情不走 StockFinLens（daily_basic 是盘后数据）
 	// 1. 腾讯财经（最稳定）
 	fmt.Printf("[DataRouter] Quote trying Tencent for %s.%s\n", market, code)
-	if quote, err := fetchQuoteFromTencent(market, code); err == nil && quote != nil && quote.CurrentPrice > 0 {
+	if quote, err := fetchQuoteFromTencent(ctx, market, code); err == nil && quote != nil && quote.CurrentPrice > 0 {
 		fmt.Printf("[DataRouter] Quote from Tencent: %.2f for %s.%s\n", quote.CurrentPrice, market, code)
 		return quote, nil
 	}
 
 	// 2. 东方财富
 	fmt.Printf("[DataRouter] Quote fallback to EastMoney for %s.%s\n", market, code)
-	return FetchStockQuote(market, code)
+	return FetchStockQuote(ctx, market, code)
 }
 
 // ========== 每日指标路由 ==========
 
 // FetchDailyMetrics 获取每日指标（PE/PB/市值/换手率），按优先级路由
-func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQuote, error) {
+func (r *DataRouter) FetchDailyMetrics(ctx context.Context, market, code, tradeDate string) (*StockQuote, error) {
 	// 1. StockFinLens daily_basic（如果启用）
 	if r.sflEnabled && r.useForQuote && r.sflClient != nil {
-		if quote, err := r.sflClient.FetchDailyBasic(market, code, tradeDate); err == nil && quote != nil && quote.CurrentPrice > 0 {
+		if quote, err := r.sflClient.FetchDailyBasic(ctx, market, code, tradeDate); err == nil && quote != nil && quote.CurrentPrice > 0 {
 			fmt.Printf("[DataRouter] Metrics from StockFinLens for %s.%s\n", market, code)
 			return quote, nil
 		}
@@ -107,13 +178,13 @@ func (r *DataRouter) FetchDailyMetrics(market, code, tradeDate string) (*StockQu
 
 	// 2. 腾讯财经（含PE/PB/市值）
 	fmt.Printf("[DataRouter] Metrics fallback to Tencent for %s.%s\n", market, code)
-	if quote, err := fetchQuoteFromTencent(market, code); err == nil && quote != nil && quote.CurrentPrice > 0 {
+	if quote, err := fetchQuoteFromTencent(ctx, market, code); err == nil && quote != nil && quote.CurrentPrice > 0 {
 		return quote, nil
 	}
 
 	// 3. 东方财富
 	fmt.Printf("[DataRouter] Metrics fallback to EastMoney for %s.%s\n", market, code)
-	return FetchStockQuote(market, code)
+	return FetchStockQuote(ctx, market, code)
 }
 
 // ========== 财报数据路由 ==========
@@ -127,7 +198,7 @@ type SFLFinancialData struct {
 }
 
 // FetchFinancialData 获取财务数据，按优先级路由
-func (r *DataRouter) FetchFinancialData(market, code string) (*SFLFinancialData, error) {
+func (r *DataRouter) FetchFinancialData(ctx context.Context, market, code string) (*SFLFinancialData, error) {
 	// 1. StockFinLens 数据源（如果启用）
 	if r.sflEnabled && r.useForFinancial && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Financial from StockFinLens for %s.%s\n", market, code)
@@ -137,19 +208,19 @@ func (r *DataRouter) FetchFinancialData(market, code string) (*SFLFinancialData,
 		var data SFLFinancialData
 		var hasData bool
 
-		if income, err := r.sflClient.FetchIncome(market, code, start, end); err == nil && len(income) > 0 {
+		if income, err := r.sflClient.FetchIncome(ctx, market, code, start, end); err == nil && len(income) > 0 {
 			data.Income = income
 			hasData = true
 		}
-		if bs, err := r.sflClient.FetchBalanceSheet(market, code, start, end); err == nil && len(bs) > 0 {
+		if bs, err := r.sflClient.FetchBalanceSheet(ctx, market, code, start, end); err == nil && len(bs) > 0 {
 			data.BalanceSheet = bs
 			hasData = true
 		}
-		if cf, err := r.sflClient.FetchCashflow(market, code, start, end); err == nil && len(cf) > 0 {
+		if cf, err := r.sflClient.FetchCashflow(ctx, market, code, start, end); err == nil && len(cf) > 0 {
 			data.Cashflow = cf
 			hasData = true
 		}
-		if ind, err := r.sflClient.FetchFinaIndicator(market, code, start, end); err == nil && len(ind) > 0 {
+		if ind, err := r.sflClient.FetchFinaIndicator(ctx, market, code, start, end); err == nil && len(ind) > 0 {
 			data.Indicators = ind
 			hasData = true
 		}
@@ -317,7 +388,7 @@ type moneyflowSource struct {
 
 // FetchMoneyflow 获取个股资金流向，按优先级路由
 // 支持多源 fallback 与结果合并，避免单一源数据缺失（如 SFL 有历史但缺当日）
-func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
+func (r *DataRouter) FetchMoneyflow(ctx context.Context, market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
 	var sources []moneyflowSource
 
 	// SFL（如果启用）
@@ -325,7 +396,7 @@ func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]
 		sources = append(sources, moneyflowSource{
 			name: "StockFinLens",
 			fn: func() ([]SFLMoneyflowItem, error) {
-				return r.sflClient.FetchMoneyflow(market, code, startDate, endDate)
+				return r.sflClient.FetchMoneyflow(ctx, market, code, startDate, endDate)
 			},
 		})
 	}
@@ -334,7 +405,7 @@ func (r *DataRouter) FetchMoneyflow(market, code, startDate, endDate string) ([]
 	sources = append(sources, moneyflowSource{
 		name: "EastMoney",
 		fn: func() ([]SFLMoneyflowItem, error) {
-			return fetchMoneyflowFromEastMoney(market, code, startDate, endDate)
+			return fetchMoneyflowFromEastMoney(ctx, market, code, startDate, endDate)
 		},
 	})
 
@@ -429,11 +500,11 @@ func shuffleSources(sources []moneyflowSource) {
 // ========== 股票基础信息路由 ==========
 
 // FetchStockBasic 获取股票基础信息
-func (r *DataRouter) FetchStockBasic(market, code string) (*SFLStockBasic, error) {
+func (r *DataRouter) FetchStockBasic(ctx context.Context, market, code string) (*SFLStockBasic, error) {
 	// 1. StockFinLens 数据源（如果启用）
 	if r.sflEnabled && r.sflClient != nil {
 		tsCode := toTsCode(market, code)
-		if basic, err := r.sflClient.FetchStockBasic(tsCode); err == nil && basic != nil {
+		if basic, err := r.sflClient.FetchStockBasic(ctx, tsCode); err == nil && basic != nil {
 			fmt.Printf("[DataRouter] StockBasic from StockFinLens for %s.%s\n", market, code)
 			return basic, nil
 		}
@@ -446,26 +517,26 @@ func (r *DataRouter) FetchStockBasic(market, code string) (*SFLStockBasic, error
 // ========== 概念板块路由 ==========
 
 // FetchConceptList 获取概念板块列表
-func (r *DataRouter) FetchConceptList() ([]SFLConcept, error) {
+func (r *DataRouter) FetchConceptList(ctx context.Context) ([]SFLConcept, error) {
 	if r.sflEnabled && r.sflClient != nil {
-		return r.sflClient.FetchConceptList()
+		return r.sflClient.FetchConceptList(ctx)
 	}
 	return nil, fmt.Errorf("数据源未启用")
 }
 
 // FetchConceptDetail 获取概念成分股
-func (r *DataRouter) FetchConceptDetail(conceptID string) ([]SFLConceptStock, error) {
+func (r *DataRouter) FetchConceptDetail(ctx context.Context, conceptID string) ([]SFLConceptStock, error) {
 	if r.sflEnabled && r.sflClient != nil {
-		return r.sflClient.FetchConceptDetail(conceptID)
+		return r.sflClient.FetchConceptDetail(ctx, conceptID)
 	}
 	return nil, fmt.Errorf("数据源未启用")
 }
 
 // FetchProfile 获取股票基本资料，按优先级路由
-func (r *DataRouter) FetchProfile(market, code string) (*StockProfile, error) {
+func (r *DataRouter) FetchProfile(ctx context.Context, market, code string) (*StockProfile, error) {
 	// 1. 东方财富（数据最完整，优先）
 	fmt.Printf("[DataRouter] Profile trying EastMoney for %s.%s\n", market, code)
-	if profile, err := FetchStockProfile(market, code); err == nil && profile != nil {
+	if profile, err := FetchStockProfile(ctx, market, code); err == nil && profile != nil {
 		return profile, nil
 	}
 
@@ -473,7 +544,7 @@ func (r *DataRouter) FetchProfile(market, code string) (*StockProfile, error) {
 	if r.sflEnabled && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Profile fallback to StockFinLens for %s.%s\n", market, code)
 		tsCode := toTsCode(market, code)
-		if basic, err := r.sflClient.FetchStockBasic(tsCode); err == nil && basic != nil {
+		if basic, err := r.sflClient.FetchStockBasic(ctx, tsCode); err == nil && basic != nil {
 			profile := &StockProfile{
 				Industry:    basic.Industry,
 				ListingDate: basic.ListDate,
@@ -486,10 +557,10 @@ func (r *DataRouter) FetchProfile(market, code string) (*StockProfile, error) {
 }
 
 // FetchConcepts 获取股票概念板块，按优先级路由
-func (r *DataRouter) FetchConcepts(market, code string, changePercent float64) (*StockConcepts, error) {
+func (r *DataRouter) FetchConcepts(ctx context.Context, market, code string, changePercent float64) (*StockConcepts, error) {
 	// 1. 东方财富（数据最完整，含风口判断，优先）
 	fmt.Printf("[DataRouter] Concepts trying EastMoney for %s.%s\n", market, code)
-	if concepts, err := FetchStockConcepts(market, code, changePercent); err == nil && concepts != nil {
+	if concepts, err := FetchStockConcepts(ctx, market, code, changePercent); err == nil && concepts != nil {
 		return concepts, nil
 	}
 
@@ -514,9 +585,9 @@ func (r *DataRouter) IsUseForMoneyflow() bool {
 }
 
 // VerifySFL 验证 SFL 授权码
-func (r *DataRouter) VerifySFL() error {
+func (r *DataRouter) VerifySFL(ctx context.Context) error {
 	if r.sflClient == nil {
 		return fmt.Errorf("数据源客户端未初始化")
 	}
-	return r.sflClient.VerifyToken()
+	return r.sflClient.VerifyToken(ctx)
 }

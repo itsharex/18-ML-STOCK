@@ -21,9 +21,6 @@ func newTestApp(t *testing.T) *App {
 
 // TestAppConfigPersistence 验证 AppConfig 读写持久化
 func TestAppConfigPersistence(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过存储测试")
-	}
 	app := newTestApp(t)
 
 	// 默认应启用自动检查
@@ -83,9 +80,6 @@ func TestCurrentVersionBinding(t *testing.T) {
 
 // TestWatchlistReorderPersistence 验证自选股排序持久化
 func TestWatchlistReorderPersistence(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过存储测试")
-	}
 	app := newTestApp(t)
 
 	// 添加测试股票
@@ -121,9 +115,6 @@ func TestWatchlistReorderPersistence(t *testing.T) {
 
 // TestReportContainsChartUnified 验证报告生成包含技术分析图 div
 func TestReportContainsChartUnified(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过报告生成测试")
-	}
 	// 读取本地 fixture 数据
 	fixturePath := filepath.Join("testdata", "603501_fixture.json")
 	if _, err := os.Stat(fixturePath); os.IsNotExist(err) {

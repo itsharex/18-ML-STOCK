@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -12,10 +16,6 @@ import (
 
 // Test603501ReportModules 验证 603501 完整分析报告的模块完整性（回归测试）
 func Test603501ReportModules(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过端到端回归测试（使用 -short 快速模式）")
-	}
-
 	// 复用 integration_test.go 的数据准备逻辑
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data", "603501")
@@ -47,7 +47,7 @@ func Test603501ReportModules(t *testing.T) {
 		}
 	}
 
-	report, err := analyzer.RunAnalysis(tmpDir, "603501")
+	report, err := analyzer.RunAnalysis(tmpDir, "603501", analyzer.AnalysisOptions{})
 	if err != nil {
 		t.Fatalf("analysis failed: %v", err)
 	}
@@ -102,14 +102,51 @@ func Test603501ReportModules(t *testing.T) {
 	}
 
 	t.Logf("报告验证通过，共 %d 个模块，%d 年评分数据", len(requiredModules), len(report.Score))
+
+	// Golden 锚点：以下指纹用于 engine.go 重构等长效回归。
+	// 任何对 RunAnalysis / 18 个 step / Evaluate 的语义变更都会让这些值变化。
+	logReportFingerprint(t, report)
+}
+
+// logReportFingerprint 打印报告的稳定指纹，便于重构前后逐字段对比。
+// 注意：MarkdownContent 内不包含时间戳（基于纯财务计算），可直接 sha256。
+func logReportFingerprint(t *testing.T, report *analyzer.AnalysisReport) {
+	t.Helper()
+
+	// 1. 评分（按年份升序输出，确保稳定）
+	years := make([]string, 0, len(report.Score))
+	for y := range report.Score {
+		years = append(years, y)
+	}
+	sort.Strings(years)
+	var scoreLines []string
+	for _, y := range years {
+		scoreLines = append(scoreLines, fmt.Sprintf("%s=%.4f", y, report.Score[y]))
+	}
+	t.Logf("[GOLDEN] Score: %s", strings.Join(scoreLines, ", "))
+	t.Logf("[GOLDEN] OverallGrade: %q", report.OverallGrade)
+
+	// 2. MarkdownContent 的 sha256（最强的"内容未变"检测）
+	mdSum := sha256.Sum256([]byte(report.MarkdownContent))
+	t.Logf("[GOLDEN] MarkdownSHA256: %s (len=%d)", hex.EncodeToString(mdSum[:]), len(report.MarkdownContent))
+
+	// 3. 各 step 通过情况（步序号+各年 pass）
+	for i, step := range report.StepResults {
+		var passLines []string
+		stepYears := make([]string, 0, len(step.Pass))
+		for y := range step.Pass {
+			stepYears = append(stepYears, y)
+		}
+		sort.Strings(stepYears)
+		for _, y := range stepYears {
+			passLines = append(passLines, fmt.Sprintf("%s=%v", y, step.Pass[y]))
+		}
+		t.Logf("[GOLDEN] Step%-2d Pass: %s", i+1, strings.Join(passLines, ", "))
+	}
 }
 
 // TestStorageCRUD 验证存储层 CRUD 操作（回归测试）
 func TestStorageCRUD(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过存储测试")
-	}
-
 	tmpDir := t.TempDir()
 	storage := &Storage{dataDir: tmpDir}
 
@@ -153,10 +190,6 @@ func TestStorageCRUD(t *testing.T) {
 
 // TestAnalyzerScoreConsistency 验证评分计算一致性
 func TestAnalyzerScoreConsistency(t *testing.T) {
-	if testing.Short() {
-		t.Skip("跳过评分一致性测试")
-	}
-
 	// 使用与 Test603501ReportModules 相同的数据准备
 	tmpDir := t.TempDir()
 	dataDir := filepath.Join(tmpDir, "data", "603501")
@@ -185,7 +218,7 @@ func TestAnalyzerScoreConsistency(t *testing.T) {
 		}
 	}
 
-	report, err := analyzer.RunAnalysis(tmpDir, "603501")
+	report, err := analyzer.RunAnalysis(tmpDir, "603501", analyzer.AnalysisOptions{})
 	if err != nil {
 		t.Fatalf("analysis failed: %v", err)
 	}

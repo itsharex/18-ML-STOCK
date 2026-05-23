@@ -1,10 +1,9 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 )
 
@@ -25,7 +24,7 @@ func toYahooSymbol(market, code string) string {
 }
 
 // fetchKlinesFromYahoo 从 Yahoo Finance 获取历史 K线
-func fetchKlinesFromYahoo(market, code string, days int) ([]KlineData, error) {
+func fetchKlinesFromYahoo(ctx context.Context, market, code string, days int) ([]KlineData, error) {
 	symbol := toYahooSymbol(market, code)
 	end := time.Now().Unix()
 	start := time.Now().AddDate(0, 0, -days).Unix()
@@ -33,16 +32,11 @@ func fetchKlinesFromYahoo(market, code string, days int) ([]KlineData, error) {
 	url := fmt.Sprintf("%s/%s?period1=%d&period2=%d&interval=1d&events=history", yahooBaseURL, symbol, start, end)
 	fmt.Printf("[Yahoo] fetching klines: %s\n", url)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("Yahoo 请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取 Yahoo 响应失败: %w", err)
 	}
 
 	var result struct {
@@ -123,21 +117,16 @@ func fetchKlinesFromYahoo(market, code string, days int) ([]KlineData, error) {
 }
 
 // fetchQuoteFromYahoo 从 Yahoo Finance 获取实时行情
-func fetchQuoteFromYahoo(market, code string) (*StockQuote, error) {
+func fetchQuoteFromYahoo(ctx context.Context, market, code string) (*StockQuote, error) {
 	symbol := toYahooSymbol(market, code)
 	url := fmt.Sprintf("%s/%s?interval=1d&range=1d", yahooBaseURL, symbol)
 	fmt.Printf("[Yahoo] fetching quote: %s\n", url)
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("Yahoo 请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取 Yahoo 响应失败: %w", err)
 	}
 
 	var result struct {

@@ -238,6 +238,10 @@ export function RefreshMarketCache() {
   return window['go']['main']['App']['RefreshMarketCache']();
 }
 
+export function RefreshStockKlines(arg1) {
+  return window['go']['main']['App']['RefreshStockKlines'](arg1);
+}
+
 export function RefreshStockProfile(arg1) {
   return window['go']['main']['App']['RefreshStockProfile'](arg1);
 }

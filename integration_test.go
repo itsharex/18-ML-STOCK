@@ -40,7 +40,7 @@ func TestAnalyze603501(t *testing.T) {
 		}
 	}
 
-	report, err := analyzer.RunAnalysis(tmpDir, "603501")
+	report, err := analyzer.RunAnalysis(tmpDir, "603501", analyzer.AnalysisOptions{})
 	if err != nil {
 		t.Fatalf("analysis failed: %v", err)
 	}

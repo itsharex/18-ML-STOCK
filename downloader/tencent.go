@@ -1,9 +1,9 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -20,24 +20,24 @@ type TencentFinancialData struct {
 }
 
 // DownloadFromTencent 从腾讯财经下载财务数据作为备用数据源
-func DownloadFromTencent(market, code string) (*FinancialReportData, error) {
+func DownloadFromTencent(ctx context.Context, market, code string) (*FinancialReportData, error) {
 	// 腾讯财经代码格式: sh600531 或 sz000001
 	tencentCode := strings.ToLower(market) + code
 
 	// 尝试获取资产负债表
-	balanceData, err := fetchTencentData(tencentCode, "f10_zcfzb")
+	balanceData, err := fetchTencentData(ctx, tencentCode, "f10_zcfzb")
 	if err != nil {
 		return nil, fmt.Errorf("腾讯财经资产负债表获取失败: %w", err)
 	}
 
 	// 尝试获取利润表
-	incomeData, err := fetchTencentData(tencentCode, "f10_lrb")
+	incomeData, err := fetchTencentData(ctx, tencentCode, "f10_lrb")
 	if err != nil {
 		return nil, fmt.Errorf("腾讯财经利润表获取失败: %w", err)
 	}
 
 	// 尝试获取现金流量表
-	cashflowData, err := fetchTencentData(tencentCode, "f10_xjllb")
+	cashflowData, err := fetchTencentData(ctx, tencentCode, "f10_xjllb")
 	if err != nil {
 		return nil, fmt.Errorf("腾讯财经现金流量表获取失败: %w", err)
 	}
@@ -54,30 +54,18 @@ func DownloadFromTencent(market, code string) (*FinancialReportData, error) {
 	return result, nil
 }
 
-func fetchTencentData(code, endpoint string) (map[string]any, error) {
+func fetchTencentData(ctx context.Context, code, endpoint string) (map[string]any, error) {
 	url := fmt.Sprintf("%s/%s?code=%s", tencentFinanceBaseURL, endpoint, code)
 
-	client := &http.Client{Timeout: 20 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url, WithReferer("https://stock.finance.qq.com/"))
 	if err != nil {
 		return nil, err
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-	req.Header.Set("Referer", "https://stock.finance.qq.com/")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, err
 	}
 

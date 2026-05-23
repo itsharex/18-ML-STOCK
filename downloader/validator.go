@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -18,7 +19,7 @@ type ValidationResult struct {
 }
 
 // ValidateWithDatacenter 用 datacenter-web API 校验 HSF10 下载的数据
-func ValidateWithDatacenter(market, code string, data *FinancialReportData) ([]ValidationResult, error) {
+func ValidateWithDatacenter(ctx context.Context, market, code string, data *FinancialReportData) ([]ValidationResult, error) {
 	fullCode := market + code
 	results := []ValidationResult{}
 
@@ -75,7 +76,7 @@ func ValidateWithDatacenter(market, code string, data *FinancialReportData) ([]V
 	}
 
 	for _, r := range reports {
-		dcData, err := fetchDatacenter(r.report, code)
+		dcData, err := fetchDatacenter(ctx, r.report, code)
 		if err != nil {
 			continue // 跳过校验失败的表
 		}
@@ -134,10 +135,10 @@ func ValidateWithDatacenter(market, code string, data *FinancialReportData) ([]V
 	return results, nil
 }
 
-func fetchDatacenter(reportName, code string) ([]map[string]any, error) {
+func fetchDatacenter(ctx context.Context, reportName, code string) ([]map[string]any, error) {
 	url := fmt.Sprintf("%s?sortColumns=REPORT_DATE&sortTypes=-1&pageSize=500&pageNumber=1&reportName=%s&columns=ALL&source=WEB&filter=(SECURITY_CODE=\"%s\")", dcBaseURL, reportName, code)
 	url = strings.ReplaceAll(url, `"`, "%22")
-	body, err := httpGetWithReferer(url, "https://data.eastmoney.com/")
+	body, err := httpGetWithReferer(ctx, url, "https://data.eastmoney.com/")
 	if err != nil {
 		return nil, err
 	}

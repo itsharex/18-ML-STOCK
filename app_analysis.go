@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,21 +16,56 @@ import (
 	"github.com/liusaipu/stockfinlens/downloader"
 )
 
-func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRIM *analyzer.RIMData) (*analyzer.AnalysisReport, error) {
-	// 按股票加锁，防止同一股票被并发分析
-	a.analysisMu.Lock()
-	if a.analysisLocks == nil {
-		a.analysisLocks = make(map[string]*sync.Mutex)
+// rimHash 给 customRIM 生成稳定 hash，用于构造 singleflight key
+// （nil 返回空串，不同内容必然对应不同 key）
+func rimHash(rim *analyzer.RIMData) string {
+	if rim == nil {
+		return ""
 	}
-	mu, ok := a.analysisLocks[symbol]
-	if !ok {
-		mu = &sync.Mutex{}
-		a.analysisLocks[symbol] = mu
+	b, err := json.Marshal(rim)
+	if err != nil {
+		return "err"
 	}
-	a.analysisMu.Unlock()
-	mu.Lock()
-	defer mu.Unlock()
+	sum := sha1.Sum(b)
+	return hex.EncodeToString(sum[:])
+}
 
+// analyzeStockInternal 是 AnalyzeStock / AnalyzeStockWithRIM 的统一实现。
+// 用 singleflight 合并同 key 的并发请求：相同 symbol+overwriteLatest+RIM 的并发调用
+// 只跑一次完整分析，其它 waiter 共享结果；不同 flag 的并发调用各自独立运行。
+func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRIM *analyzer.RIMData) (*analyzer.AnalysisReport, error) {
+	key := fmt.Sprintf("%s|overwrite=%v|rim=%s", symbol, overwriteLatest, rimHash(customRIM))
+
+	result, err, _ := a.analysisGroup.Do(key, func() (interface{}, error) {
+		// 兜底：被调用链上任意一处 panic 都不会让所有 waiter 死锁
+		var report *analyzer.AnalysisReport
+		var runErr error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					runErr = fmt.Errorf("分析过程发生 panic: %v", r)
+					debugLog("[AnalyzeStock] panic recovered for %s: %v", symbol, r)
+				}
+			}()
+			report, runErr = a.runAnalysisLocked(symbol, overwriteLatest, customRIM)
+		}()
+		if runErr != nil {
+			return nil, runErr
+		}
+		return report, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*analyzer.AnalysisReport), nil
+}
+
+// runAnalysisLocked 执行实际的分析流程。已在 singleflight key 保护下，不允许同 key 并发。
+func (a *App) runAnalysisLocked(symbol string, overwriteLatest bool, customRIM *analyzer.RIMData) (*analyzer.AnalysisReport, error) {
 	debugLog("[AnalyzeStock] Starting analysis for %s, overwriteLatest=%v", symbol, overwriteLatest)
 	if a.storage == nil {
 		debugLog("[AnalyzeStock] Error: storage not initialized")
@@ -91,10 +129,12 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 			code := parts[0]
 			var list []downloader.KlineData
 			var err error
+			// 拉 2500 条（约 10 年）保证分析后缓存即覆盖 K线 view 的全量需求;
+			// SFL 启用时 DataRouter 内部会忽略 limit 直接拉上市以来全部历史
 			if a.dataRouter != nil {
-				list, err = a.dataRouter.FetchKlines(market, code, 375)
+				list, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
 			} else {
-				list, err = downloader.FetchStockKlines(market, code, 375)
+				list, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
 			}
 			if err == nil && len(list) >= 20 {
 				klines = list
@@ -136,7 +176,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 				code := parts[0]
 				market := strings.ToUpper(parts[1])
 				debugLog("[Sentiment] fetching for %s %s", market, code)
-				if s, err := downloader.FetchStockSentiment(market, code); err == nil && s != nil {
+				if s, err := downloader.FetchStockSentiment(a.ctx, market, code); err == nil && s != nil {
 					debugLog("[Sentiment] fetched ok for %s, summaries=%d", symbol, len(s.Summaries))
 					sentimentData = &analyzer.SentimentData{
 						Score:         s.Score,
@@ -177,7 +217,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 				code := parts[0]
 				end := time.Now().Format("20060102")
 				start := time.Now().AddDate(0, 0, -5).Format("20060102")
-				items, err := a.dataRouter.FetchMoneyflow(market, code, start, end)
+				items, err := a.dataRouter.FetchMoneyflow(a.ctx, market, code, start, end)
 				if err == nil && len(items) > 0 {
 					mfItems := make([]analyzer.MoneyflowItem, 0, len(items))
 					for _, item := range items {
@@ -299,7 +339,7 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 			if len(parts) == 2 {
 				market := strings.ToUpper(parts[1])
 				code := parts[0]
-				if dividendMap, err := downloader.FetchCashFlowDividendFromEastMoney(market, code, len(finData.Years)); err == nil && len(dividendMap) > 0 {
+				if dividendMap, err := downloader.FetchCashFlowDividendFromEastMoney(a.ctx, market, code, len(finData.Years)); err == nil && len(dividendMap) > 0 {
 					for year, val := range dividendMap {
 						if _, ok := finData.CashFlow["分配股利、利润或偿付利息支付的现金"]; !ok {
 							finData.CashFlow["分配股利、利润或偿付利息支付的现金"] = make(map[string]float64)
@@ -723,7 +763,20 @@ func (a *App) analyzeStockInternal(symbol string, overwriteLatest bool, customRI
 		sensitivity = analyzer.SensitivityLevel(s)
 	}
 
-	report, err := analyzer.RunAnalysisWithAll(a.storage.DataDir(), symbol, compAnalysis, quoteData, sentimentData, policyData, technicalData, activityData, moneyflowData, mlData, rimData, finData.Extras, externalRiskData, sensitivity)
+	report, err := analyzer.RunAnalysis(a.storage.DataDir(), symbol, analyzer.AnalysisOptions{
+		Comparable:  compAnalysis,
+		Quote:       quoteData,
+		Sentiment:   sentimentData,
+		Policy:      policyData,
+		Technical:   technicalData,
+		Activity:    activityData,
+		Moneyflow:   moneyflowData,
+		ML:          mlData,
+		RIM:         rimData,
+		Extras:      finData.Extras,
+		External:    externalRiskData,
+		Sensitivity: sensitivity,
+	})
 	if err != nil {
 		return nil, err
 	}

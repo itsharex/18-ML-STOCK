@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -225,7 +226,7 @@ type UpdateProgress struct {
 
 // UpdateAll 后台全量更新缓存（stock_basic → fina_indicator → concepts）
 // 分三阶段执行，每阶段完成后自动保存，防止中断丢失
-func (m *MarketCacheManager) UpdateAll(sflClient *SFLClient, progressFn func(UpdateProgress)) error {
+func (m *MarketCacheManager) UpdateAll(ctx context.Context, sflClient *SFLClient, progressFn func(UpdateProgress)) error {
 	if sflClient == nil {
 		return fmt.Errorf("SFL 客户端未初始化")
 	}
@@ -242,7 +243,7 @@ func (m *MarketCacheManager) UpdateAll(sflClient *SFLClient, progressFn func(Upd
 	if progressFn != nil {
 		progressFn(UpdateProgress{Stage: "stock_basic", Current: 0, Total: 0, Message: "正在获取全市场基础资料..."})
 	}
-	basics, err := sflClient.FetchAllStockBasic()
+	basics, err := sflClient.FetchAllStockBasic(ctx)
 	if err != nil {
 		return fmt.Errorf("获取 stock_basic 失败: %w", err)
 	}
@@ -272,7 +273,7 @@ func (m *MarketCacheManager) UpdateAll(sflClient *SFLClient, progressFn func(Upd
 
 	// 策略：先尝试一次性获取全市场最新财务指标
 	// 如果失败，则回退到逐只获取（并发限制）
-	allFinas, err := sflClient.FetchAllLatestFinaIndicator()
+	allFinas, err := sflClient.FetchAllLatestFinaIndicator(ctx)
 	if err == nil && len(allFinas) > 0 {
 		for _, f := range allFinas {
 			if item, ok := items[f.TsCode]; ok {
@@ -315,7 +316,7 @@ func (m *MarketCacheManager) UpdateAll(sflClient *SFLClient, progressFn func(Upd
 				}
 				market := strings.ToUpper(parts[1])
 				code := parts[0]
-				fina, _ := sflClient.FetchFinaIndicator(market, code, "", "")
+				fina, _ := sflClient.FetchFinaIndicator(ctx, market, code, "", "")
 				if len(fina) > 0 {
 					f := fina[0]
 					mu.Lock()
@@ -350,7 +351,7 @@ func (m *MarketCacheManager) UpdateAll(sflClient *SFLClient, progressFn func(Upd
 		progressFn(UpdateProgress{Stage: "concepts", Current: 0, Total: 0, Message: "正在获取概念映射..."})
 	}
 	// 策略：获取所有概念列表，再获取每个概念的成分股，反向构建 股票→概念 映射
-	conceptMap, err := sflClient.FetchAllConceptMappings()
+	conceptMap, err := sflClient.FetchAllConceptMappings(ctx)
 	if err == nil && len(conceptMap) > 0 {
 		for sym, concepts := range conceptMap {
 			if item, ok := items[sym]; ok {

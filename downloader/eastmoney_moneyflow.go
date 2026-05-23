@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -27,7 +28,7 @@ type eastMoneyMoneyflowResp struct {
 // fetchMoneyflowFromEastMoney 从东方财富获取个股历史资金流向
 // secid 格式: 0.code(深圳), 1.code(上海)
 // 返回数据按日期升序排列，需反转
-func fetchMoneyflowFromEastMoney(market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
+func fetchMoneyflowFromEastMoney(ctx context.Context, market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
 	secid := toEastMoneySecid(market, code)
 	url := fmt.Sprintf(
 		"https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get?"+
@@ -35,7 +36,7 @@ func fetchMoneyflowFromEastMoney(market, code, startDate, endDate string) ([]SFL
 			"ut=b2884a393a59ad64002292a3e90d46a5",
 		secid)
 
-	body, err := httpGetEastMoney(url)
+	body, err := httpGetEastMoney(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("东财资金流向请求失败: %w", err)
 	}

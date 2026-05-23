@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -154,10 +155,10 @@ var scopeConceptMap = map[string][]string{
 }
 
 // FetchStockConcepts 根据行业和经营范围生成概念与风口
-func FetchStockConcepts(market, code string, changePercent float64) (*StockConcepts, error) {
+func FetchStockConcepts(ctx context.Context, market, code string, changePercent float64) (*StockConcepts, error) {
 	csCode := toCsCode(market, code)
 	url := fmt.Sprintf("https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax?code=%s", csCode)
-	body, err := httpGetWithReferer(url, "https://emweb.securities.eastmoney.com/")
+	body, err := httpGetWithReferer(ctx, url, "https://emweb.securities.eastmoney.com/")
 	if err != nil {
 		return nil, err
 	}

@@ -1,5 +1,24 @@
 # Changelog
 
+## [v1.3.40] - 2026-05-23
+
+### 新增 (Features)
+- **K线"刷新K线"按钮** (`app.go`, `frontend/src/UnifiedChart.tsx`)
+  - 新增 Wails 方法 `RefreshStockKlines(symbol)`：绕过本地 `klines.json` 缓存，从远程拉取全量历史（最多 2500 条，SFL 启用时拉全量）后写回缓存。
+  - K线图左上角加按钮，解决早期版本写入的旧缓存（条数偏少）导致 dataZoom 拖不到上市初期的问题（典型例子：山东威达 002026.SZ，旧缓存只有 375 条，最早 2024-11-04；刷新后 5142 条，最早 2004-07-27）。
+- **"K线"快捷入口** (`frontend/src/App.tsx`)：股票卡片新增红色"K线"按钮，一键进入全窗口 K 线 + 技术指标联动视图。
+- **"刷新"基本资料按钮** (`frontend/src/App.tsx`)：股票卡片可手动刷新行业 / PE / PB 等基础信息。
+- **HTTP 客户端封装** (`downloader/http.go`)：统一 timeout / Referer / context 取消。
+
+### 优化 (Improvements)
+- **可比公司推荐 UI**：去掉常驻显示的推荐理由行，改为鼠标 hover 容器时浏览器原生 tooltip 弹出，列表更紧凑。
+- **context 全链路传递**：`DataRouter` / `eastmoney` / `tencent` / `yahoo` 等所有下载器方法签名增加 `ctx context.Context` 参数，配合 HTTP 超时和 App 退出时优雅取消请求。
+- **并发分析合并**：`App` 用 `singleflight.Group` 替换原先的 `analysisMu + analysisLocks`，同股票同 flag 的并发分析自动合并为一次。
+- **前端 API 分桶重构** (`frontend/src/api/`)：把 wails 生成的所有 Go 方法按领域拆为 `analysis / data / profile / quotes / report / settings / watchlist / admin` 等模块，统一通过 `wrap.ts` 包装错误归一化，调用方仍可从 `./api` 一次性 import。
+
+### 修复 (Fixes)
+- **K线缓存陈旧**：早期版本写入的本地 `klines.json` 一旦命中就不再刷新，导致用户拖动 K 线无法回溯到上市初期。现在提供主动刷新入口（不改变默认命中策略，避免破坏港股 / 新股场景）。
+
 ## [v1.3.39] - 2026-05-22
 
 ### 新增 (Features)

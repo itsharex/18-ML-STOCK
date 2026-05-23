@@ -5,33 +5,31 @@ import (
 	"strings"
 )
 
-// RunAnalysis 执行完整的财报透视分析，返回报告
-func RunAnalysis(baseDir, symbol string) (*AnalysisReport, error) {
-	return RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol, nil, nil, nil, nil)
+// AnalysisOptions 控制 RunAnalysis 集成哪些附加数据。零值合法（=纯财务透视）。
+// 新增维度时只需在此 struct 加字段，无需新增 RunAnalysisWithXxx 包装函数。
+type AnalysisOptions struct {
+	Comparable  *ComparableAnalysis
+	Quote       *QuoteData
+	Sentiment   *SentimentData
+	Policy      *PolicyMatchData
+	Technical   *TechnicalData
+	Activity    *ActivityData
+	Moneyflow   *MoneyflowData
+	ML          *MLPredictionData
+	RIM         *RIMData
+	Extras      map[string]float64
+	External    *ExternalRiskData
+	Sensitivity SensitivityLevel // 零值视为 SensitivityStandard
 }
 
-// RunAnalysisWithComparables 执行完整的财报透视分析，并集成可比公司横向对比
-func RunAnalysisWithComparables(baseDir, symbol string, comp *ComparableAnalysis) (*AnalysisReport, error) {
-	return RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol, comp, nil, nil, nil)
-}
+// RunAnalysis 执行完整的财报透视分析，返回报告。
+// 零值 opts 等价于纯财务透视（不集成行情/舆情/ML/可比公司等附加数据）。
+func RunAnalysis(baseDir, symbol string, opts AnalysisOptions) (*AnalysisReport, error) {
+	// Sensitivity 零值兜底（SensitivityLevel 是 string，零值为 ""）
+	if opts.Sensitivity == "" {
+		opts.Sensitivity = SensitivityStandard
+	}
 
-// RunAnalysisWithComparablesAndQuote 执行完整的财报透视分析，集成可比公司横向对比与实时行情
-func RunAnalysisWithComparablesAndQuote(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData) (*AnalysisReport, error) {
-	return RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol, comp, quote, nil, nil)
-}
-
-// RunAnalysisWithComparablesAndQuoteAndSentiment 执行完整的财报透视分析，集成可比公司横向对比、实时行情与舆情情绪
-func RunAnalysisWithComparablesAndQuoteAndSentiment(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData) (*AnalysisReport, error) {
-	return RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol, comp, quote, sentiment, nil)
-}
-
-// RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy 执行完整的财报透视分析，集成可比公司横向对比、实时行情、舆情情绪与政策匹配度
-func RunAnalysisWithComparablesAndQuoteAndSentimentAndPolicy(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData) (*AnalysisReport, error) {
-	return RunAnalysisWithAll(baseDir, symbol, comp, quote, sentiment, policy, nil, nil, nil, nil, nil, nil, nil, SensitivityStandard)
-}
-
-// RunAnalysisWithAll 执行完整的财报透视分析，集成所有附加模块（可比公司、行情、舆情、政策、技术形态、交易活跃度、机器学习、RIM估值）
-func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote *QuoteData, sentiment *SentimentData, policy *PolicyMatchData, technical *TechnicalData, activity *ActivityData, moneyflow *MoneyflowData, ml *MLPredictionData, rim *RIMData, extras map[string]float64, external *ExternalRiskData, sensitivity SensitivityLevel) (*AnalysisReport, error) {
 	data, err := LoadFinancialData(baseDir, symbol)
 	if err != nil {
 		return nil, fmt.Errorf("load financial data: %w", err)
@@ -40,11 +38,11 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 		return nil, fmt.Errorf("no financial data available for %s", symbol)
 	}
 	// 将传入的 extras 回填到 data.Extras，供 step8RiskAnalysis 等使用
-	if len(extras) > 0 {
+	if len(opts.Extras) > 0 {
 		if data.Extras == nil {
 			data.Extras = make(map[string]float64)
 		}
-		for k, v := range extras {
+		for k, v := range opts.Extras {
 			data.Extras[k] = v
 		}
 	}
@@ -108,25 +106,25 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 	}
 
 	// 生成 ML 综合预测摘要（融入 A-Score）
-	if ml != nil {
+	if opts.ML != nil {
 		ascore := getAScore(steps[7].YearlyData, data.Years)
-		ml.Summary = BuildMLSummary(ml, technical, activity, sentiment, ascore)
+		opts.ML.Summary = BuildMLSummary(opts.ML, opts.Technical, opts.Activity, opts.Sentiment, ascore)
 	}
 
 	// 行业均值对比
 	var industry *IndustryComparison
-	if policy != nil && policy.Industry != "" {
-		industry = CompareWithIndustry(policy.Industry, steps, data.Years[0])
+	if opts.Policy != nil && opts.Policy.Industry != "" {
+		industry = CompareWithIndustry(opts.Policy.Industry, steps, data.Years[0])
 	}
 
 	// 构建风险警示摘要
-	riskAlert := BuildRiskAlertSummary(steps, extras, data.Years, external, sensitivity)
+	riskAlert := BuildRiskAlertSummary(steps, opts.Extras, data.Years, opts.External, opts.Sensitivity)
 
 	// 季度滚动预警 + TTM
 	quarterlyAlert := BuildQuarterlyAlert(data)
 	ttmMetrics := BuildTTMMetrics(data)
 
-	md := GenerateMarkdown(symbol, data.Years, steps, scores, comp, industry, quote, sentiment, policy, technical, activity, moneyflow, ml, rim, riskAlert, data.QualityWarnings, nil, quarterlyAlert, ttmMetrics)
+	md := GenerateMarkdown(symbol, data.Years, steps, scores, opts.Comparable, industry, opts.Quote, opts.Sentiment, opts.Policy, opts.Technical, opts.Activity, opts.Moneyflow, opts.ML, opts.RIM, riskAlert, data.QualityWarnings, nil, quarterlyAlert, ttmMetrics)
 
 	hr := ExtractHighlightsAndRisks(steps, data.Years)
 
@@ -140,7 +138,7 @@ func RunAnalysisWithAll(baseDir, symbol string, comp *ComparableAnalysis, quote 
 		ScoreDetails:    scores,
 		OverallGrade:    overallGrade,
 		MarkdownContent: md,
-		RIM:             rim,
+		RIM:             opts.RIM,
 		Highlights:      hr.Highlights,
 		Risks:           hr.Risks,
 		RiskAlert:       riskAlert,

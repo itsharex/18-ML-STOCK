@@ -123,6 +123,8 @@ export function RefreshIndustryBaselines():Promise<Record<string, analyzer.Indus
 
 export function RefreshMarketCache():Promise<string>;
 
+export function RefreshStockKlines(arg1:string):Promise<Array<downloader.KlineData>>;
+
 export function RefreshStockProfile(arg1:string):Promise<main.StockProfile>;
 
 export function ReloadIndustryDatabase():Promise<void>;

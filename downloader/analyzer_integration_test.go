@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +12,9 @@ import (
 
 func TestDownloadAndAnalyze603501(t *testing.T) {
 	if testing.Short() {
-		t.Skip("跳过网络测试，使用 -short 运行快速回归")
+		t.Skip("跳过实时网络测试（需打东财 HTTP；发布前手动 go test ./... 跑一次作为外部接口 canary）")
 	}
-	data, err := DownloadFinancialReports("SH", "603501")
+	data, err := DownloadFinancialReports(context.Background(), "SH", "603501")
 	if err != nil {
 		t.Fatalf("download failed: %v", err)
 	}
@@ -27,7 +28,7 @@ func TestDownloadAndAnalyze603501(t *testing.T) {
 		t.Fatalf("save failed: %v", err)
 	}
 
-	report, err := analyzer.RunAnalysis(tmpDir, "603501.SH")
+	report, err := analyzer.RunAnalysis(tmpDir, "603501.SH", analyzer.AnalysisOptions{})
 	if err != nil {
 		t.Fatalf("analysis failed: %v", err)
 	}

@@ -130,21 +130,14 @@ function Start-Dev {
 function Build-Project {
     param([string]$Platform = "windows/amd64")
 
-    # 版本一致性校验
+    # 版本号唯一来源：wails.json -> info.productVersion（前端通过 vite define 在构建期注入）
     $wailsJson = Get-Content "$ProjectRoot\wails.json" -Raw | ConvertFrom-Json
     $wailsVersion = $wailsJson.info.productVersion
-    $settingsContent = Get-Content "$ProjectRoot\frontend\src\Settings.tsx" -Raw
-    $settingsMatch = [regex]::Match($settingsContent, "const version = '([^']+)'")
-    if (-not $settingsMatch.Success) {
-        Write-Error "无法从 Settings.tsx 读取版本号"
+    if ([string]::IsNullOrEmpty($wailsVersion)) {
+        Write-Error "无法从 wails.json 读取 info.productVersion"
         exit 1
     }
-    $settingsVersion = $settingsMatch.Groups[1].Value
-    if ($wailsVersion -ne $settingsVersion) {
-        Write-Error "版本号不一致: wails.json=$wailsVersion, Settings.tsx=$settingsVersion。请先同步版本号再构建。"
-        exit 1
-    }
-    
+
     Write-Info "构建 Windows 版本 $wailsVersion ($Platform)..."
     Install-FrontendDeps
     

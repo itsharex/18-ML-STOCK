@@ -1,10 +1,9 @@
 package downloader
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"sort"
 	"strings"
@@ -46,12 +45,12 @@ var (
 )
 
 // FetchStockSentiment 获取指定股票的舆情情绪数据
-func FetchStockSentiment(market, code string) (*SentimentData, error) {
+func FetchStockSentiment(ctx context.Context, market, code string) (*SentimentData, error) {
 	// 1. 优先东财研报（带重试）
 	var data *SentimentData
 	var err error
 	for i := 0; i < 2; i++ {
-		data, err = fetchSentimentFromEastMoneyReports(code)
+		data, err = fetchSentimentFromEastMoneyReports(ctx, code)
 		if err == nil && data != nil && data.HasData {
 			return data, nil
 		}
@@ -61,13 +60,13 @@ func FetchStockSentiment(market, code string) (*SentimentData, error) {
 	}
 
 	// 2. fallback 东财公司公告
-	data, err = fetchSentimentFromEastMoneyNotices(code)
+	data, err = fetchSentimentFromEastMoneyNotices(ctx, code)
 	if err == nil && data != nil && data.HasData {
 		return data, nil
 	}
 
 	// 3. fallback 新浪财经新闻
-	data, err = fetchSentimentFromSinaNews(code)
+	data, err = fetchSentimentFromSinaNews(ctx, code)
 	if err == nil && data != nil && data.HasData {
 		return data, nil
 	}
@@ -89,20 +88,15 @@ func FetchStockSentiment(market, code string) (*SentimentData, error) {
 }
 
 // ========== 东财研报接口 ==========
-func fetchSentimentFromEastMoneyReports(code string) (*SentimentData, error) {
+func fetchSentimentFromEastMoneyReports(ctx context.Context, code string) (*SentimentData, error) {
 	// 查询最近6个月的研报
 	begin := time.Now().AddDate(0, -6, 0).Format("2006-01-02")
 	end := time.Now().Format("2006-01-02")
 	url := fmt.Sprintf("https://reportapi.eastmoney.com/report/list?industryCode=*&pageNo=1&pageSize=20&code=%s&beginTime=%s&endTime=%s&qType=0", code, begin, end)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +141,7 @@ func fetchSentimentFromEastMoneyReports(code string) (*SentimentData, error) {
 }
 
 // ========== 东财公告接口 ==========
-func fetchSentimentFromEastMoneyNotices(code string) (*SentimentData, error) {
+func fetchSentimentFromEastMoneyNotices(ctx context.Context, code string) (*SentimentData, error) {
 	begin := time.Now().AddDate(0, -6, 0).Format("2006-01-02")
 	end := time.Now().Format("2006-01-02")
 	url := fmt.Sprintf(
@@ -155,14 +149,9 @@ func fetchSentimentFromEastMoneyNotices(code string) (*SentimentData, error) {
 		code, begin, end,
 	)
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}
@@ -206,16 +195,11 @@ func fetchSentimentFromEastMoneyNotices(code string) (*SentimentData, error) {
 }
 
 // ========== 新浪新闻接口 ==========
-func fetchSentimentFromSinaNews(code string) (*SentimentData, error) {
-	url := fmt.Sprintf("https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&num=50&page=1")
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
+func fetchSentimentFromSinaNews(ctx context.Context, code string) (*SentimentData, error) {
+	url := "https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2516&num=50&page=1"
+	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	body, err := HTTPGet(rctx, url)
 	if err != nil {
 		return nil, err
 	}

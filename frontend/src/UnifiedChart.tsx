@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import * as echarts from 'echarts'
 import type { downloader } from '../wailsjs/go/models'
-import { GetStockKlines, GetStockQuote } from '../wailsjs/go/main/App'
+import { GetStockKlines, GetStockQuote, RefreshStockKlines } from './api'
 
 type KlineData = downloader.KlineData
 type StockQuote = downloader.StockQuote
@@ -9,6 +9,10 @@ type StockQuote = downloader.StockQuote
 interface Props {
   code: string
   quote?: StockQuote
+  // 挂载时即为全屏展开状态（用于"技术图"按钮触发的独立实例）
+  initialExpanded?: boolean
+  // 用户退出全屏时回调（dblclick / Esc / 右上角按钮三个出口都会触发）
+  onClose?: () => void
 }
 
 const colors = {
@@ -49,12 +53,6 @@ function calcMA(arr: number[], period: number): (number | null)[] {
     ma.push(sum / period)
   }
   return ma
-}
-
-function padArray<T>(arr: T[], size: number): (T | '-')[] {
-  const padCount = size - arr.length
-  if (padCount <= 0) return arr as (T | '-')[]
-  return [...Array(padCount).fill('-'), ...arr]
 }
 
 function calculateIndicators(data: KlineData[]) {
@@ -144,13 +142,14 @@ function fmt1(v: any): string {
   return n.toFixed(1)
 }
 
-export function UnifiedChart({ code, quote: propQuote }: Props) {
+export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose }: Props) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstanceRef = useRef<echarts.ECharts | null>(null)
   const [rawData, setRawData] = useState<KlineData[]>([])
   const [localQuote, setLocalQuote] = useState<StockQuote | undefined>(propQuote)
   const [loading, setLoading] = useState(false)
-  const [isExpanded, setIsExpanded] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [isExpanded, setIsExpanded] = useState(!!initialExpanded)
 
   // 如果 propQuote 变化，同步更新 localQuote
   useEffect(() => {
@@ -203,31 +202,31 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
     const chart = echarts.init(chartRef.current, 'dark', { renderer: 'canvas' })
     chartInstanceRef.current = chart
 
-    chart.getZr().on('dblclick', () => setIsExpanded(v => !v))
+    chart.getZr().on('dblclick', () => {
+      setIsExpanded(prev => {
+        const next = !prev
+        if (!next && onClose) onClose()
+        return next
+      })
+    })
 
-    const displaySize = isExpanded ? 250 : 120
+    // 默认可见窗口大小:常态 120 条 / 全屏 250 条;
+    // 但 xAxis.data 给的是**全量**,通过 dataZoom 控制可见范围,这样用户能左右拖动浏览历史。
+    const visibleSize = isExpanded ? 250 : 120
+    const total = data.length
+    const zoomStart = total > visibleSize ? ((total - visibleSize) / total) * 100 : 0
+
     const { dif, dea, hist, rsi6, rsi12, rsi24, bbUpper, bbMid, bbLower, ma5, ma10, ma30, ma60 } = calculateIndicators(data)
 
-    const displayData = data.slice(-displaySize)
-    const padCount = displaySize - displayData.length
-    const dates = [...Array(padCount).fill(''), ...displayData.map(d => d.time)]
+    // xAxis 与所有 series 全部使用全量数据;dataZoom 只裁剪可见窗口,不裁剪计算窗口。
+    const dates = data.map(d => d.time)
+    const candleData = data.map(d => [d.open, d.close, d.low, d.high])
+    const turnoverData = data.map((d: KlineData) => ({
+      value: d.turnoverRate,
+      itemStyle: { color: d.close >= d.open ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)' },
+    }))
 
-    const safePad = Array(padCount).fill('-')
-    const candleData = [...safePad, ...displayData.map(d => [d.open, d.close, d.low, d.high])]
-    const turnoverData = [
-      ...safePad,
-      ...displayData.map((d: KlineData) => ({
-        value: d.turnoverRate,
-        itemStyle: { color: d.close >= d.open ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)' },
-      })),
-    ]
-
-    const sliceDisplay = (arr: (number | null)[]) => {
-      const sliced = arr.slice(-displaySize)
-      return padArray(sliced, displaySize)
-    }
-
-    const xAxisLabelInterval = isExpanded ? 39 : 19
+    const xAxisLabelInterval = isExpanded ? Math.max(1, Math.floor(visibleSize / 6)) : Math.max(1, Math.floor(visibleSize / 6))
 
     const option: echarts.EChartsOption = {
       backgroundColor: 'transparent',
@@ -260,11 +259,12 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
           const leftItems: string[] = []
           const candle = params.find((p: any) => p.seriesName === 'K线')
           if (candle) {
-            const idx = candle.dataIndex - padCount
-            const d = displayData[idx]
+            // 全量 data 模式：dataIndex 即 data 数组的索引，不再有 padding
+            const idx = candle.dataIndex
+            const d = data[idx]
             if (d) {
               const o = d.open, c = d.close, l = d.low, h = d.high
-              const prevClose = idx > 0 ? displayData[idx - 1].close : o
+              const prevClose = idx > 0 ? data[idx - 1].close : o
               const change = c - prevClose
               const changePct = prevClose !== 0 ? (change / prevClose) * 100 : 0
               const changeColor = change >= 0 ? '#ef4444' : '#22c55e'
@@ -328,6 +328,19 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
         link: [{ xAxisIndex: 'all' }],
         label: { show: false },
       },
+      // dataZoom 让用户能左右拖动浏览全部历史，初始窗口落在最新一段。
+      // type: 'inside' = 内嵌交互，无底部滑块；5 个子图共享同一个 zoom。
+      dataZoom: [
+        {
+          type: 'inside',
+          xAxisIndex: [0, 1, 2, 3, 4],
+          start: zoomStart,
+          end: 100,
+          zoomOnMouseWheel: true,  // 滚轮缩放
+          moveOnMouseMove: true,   // 按住鼠标拖动平移
+          moveOnMouseWheel: false, // shift+滚轮 平移（关掉，避免与缩放混淆）
+        },
+      ],
       grid: isExpanded ? [
         { left: 75, right: 16, top: 38, height: '44%' },
         { left: 75, right: 16, top: '50%', height: '11%' },
@@ -352,11 +365,8 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
         { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, gridIndex: 0, position: 'left', axisLabel: { fontSize: 10, color: '#94a3b8', margin: 10 }, splitNumber: 5, name: 'K线', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt2(params.value) } } },
         { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, gridIndex: 1, position: 'left', axisLabel: { show: false }, splitNumber: 2, name: '换手', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt2(params.value) + '%' } } },
         { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, gridIndex: 2, position: 'left', axisLabel: { show: false }, splitNumber: 3, name: 'MACD', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt3(params.value) } } },
-        { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, min: 0, max: 100, gridIndex: 3, position: 'left', axisLabel: { show: false }, splitNumber: 2, name: 'RSI(6,12,24)', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt1(params.value) } } },
+        { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, min: 0, max: 100, gridIndex: 3, position: 'left', axisLabel: { show: false }, splitNumber: 2, name: 'RSI', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt1(params.value) } } },
         { scale: true, splitArea: { show: false }, splitLine: { lineStyle: { color: 'rgba(148, 163, 184, 0.08)' } }, gridIndex: 4, position: 'left', axisLabel: { show: false }, splitNumber: 3, name: 'BOLL', nameLocation: 'middle', nameRotate: 0, nameGap: 32, nameTextStyle: { color: '#94a3b8', fontSize: 11, align: 'right' }, axisPointer: { label: { show: true, formatter: (params: any) => fmt2(params.value) } } },
-      ],
-      dataZoom: [
-        { type: 'inside', xAxisIndex: [0, 1, 2, 3, 4], start: 0, end: 100, zoomLock: true },
       ],
       series: [
         {
@@ -381,25 +391,25 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
           yAxisIndex: 1,
           cursor: 'default',
         },
-        { name: 'MA5', type: 'line', data: sliceDisplay(ma5), smooth: false, lineStyle: { color: colors.ma5, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA10', type: 'line', data: sliceDisplay(ma10), smooth: false, lineStyle: { color: colors.ma10, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA30', type: 'line', data: sliceDisplay(ma30), smooth: false, lineStyle: { color: colors.ma30, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA60', type: 'line', data: sliceDisplay(ma60), smooth: false, lineStyle: { color: colors.ma60, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'DIF', type: 'line', data: sliceDisplay(dif), smooth: true, lineStyle: { color: colors.macd }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
-        { name: 'DEA', type: 'line', data: sliceDisplay(dea), smooth: true, lineStyle: { color: colors.signal }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
+        { name: 'MA5', type: 'line', data: ma5, smooth: false, lineStyle: { color: colors.ma5, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
+        { name: 'MA10', type: 'line', data: ma10, smooth: false, lineStyle: { color: colors.ma10, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
+        { name: 'MA30', type: 'line', data: ma30, smooth: false, lineStyle: { color: colors.ma30, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
+        { name: 'MA60', type: 'line', data: ma60, smooth: false, lineStyle: { color: colors.ma60, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
+        { name: 'DIF', type: 'line', data: dif, smooth: true, lineStyle: { color: colors.macd }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
+        { name: 'DEA', type: 'line', data: dea, smooth: true, lineStyle: { color: colors.signal }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
         {
-          name: 'MACD', type: 'bar', data: sliceDisplay(hist).map(v => typeof v === 'number' ? {
+          name: 'MACD', type: 'bar', data: hist.map(v => typeof v === 'number' ? {
             value: v,
             itemStyle: { color: v >= 0 ? colors.histPositive : colors.histNegative },
           } : '-'),
           xAxisIndex: 2, yAxisIndex: 2, cursor: 'default',
         },
-        { name: 'RSI6', type: 'line', data: sliceDisplay(rsi6), smooth: true, lineStyle: { color: colors.rsi6, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
-        { name: 'RSI12', type: 'line', data: sliceDisplay(rsi12), smooth: true, lineStyle: { color: colors.rsi12, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
-        { name: 'RSI24', type: 'line', data: sliceDisplay(rsi24), smooth: true, lineStyle: { color: colors.rsi24, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
-        { name: '上轨', type: 'line', data: sliceDisplay(bbUpper), smooth: true, lineStyle: { color: colors.bbUpper }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
-        { name: '中轨', type: 'line', data: sliceDisplay(bbMid), smooth: true, lineStyle: { color: colors.bbMid, width: 2 }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
-        { name: '下轨', type: 'line', data: sliceDisplay(bbLower), smooth: true, lineStyle: { color: colors.bbLower }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
+        { name: 'RSI6', type: 'line', data: rsi6, smooth: true, lineStyle: { color: colors.rsi6, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
+        { name: 'RSI12', type: 'line', data: rsi12, smooth: true, lineStyle: { color: colors.rsi12, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
+        { name: 'RSI24', type: 'line', data: rsi24, smooth: true, lineStyle: { color: colors.rsi24, width: 1.5 }, symbol: 'none', xAxisIndex: 3, yAxisIndex: 3, connectNulls: false, cursor: 'default' },
+        { name: '上轨', type: 'line', data: bbUpper, smooth: true, lineStyle: { color: colors.bbUpper }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
+        { name: '中轨', type: 'line', data: bbMid, smooth: true, lineStyle: { color: colors.bbMid, width: 2 }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
+        { name: '下轨', type: 'line', data: bbLower, smooth: true, lineStyle: { color: colors.bbLower }, symbol: 'none', xAxisIndex: 4, yAxisIndex: 4, connectNulls: false, cursor: 'default' },
       ],
     }
 
@@ -432,17 +442,71 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
   useEffect(() => {
     if (!isExpanded) return
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsExpanded(false)
+      if (e.key === 'Escape') {
+        setIsExpanded(false)
+        onClose?.()
+      }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [isExpanded])
+  }, [isExpanded, onClose])
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>加载图表数据中...</div>
-  if (data.length === 0) return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>暂无K线数据</div>
+  // 用户主动触发：绕过缓存重拉。早期版本写入的缓存可能只有几百条，导致 dataZoom 拖不到上市初期。
+  const handleRefresh = async () => {
+    if (!code || refreshing) return
+    setRefreshing(true)
+    try {
+      const list = await RefreshStockKlines(code)
+      setRawData(list || [])
+    } catch (e) {
+      console.error('刷新K线失败:', e)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // 外层包装:isExpanded=true 时完全脱离正常布局(0×0 fixed),避免在 App.tsx 顶层挂载时
+  // 作为 flex item 挤压中栏宽度;子元素仍以自身 fixed 定位铺满 viewport。
+  const outerStyle: CSSProperties = isExpanded
+    ? { position: 'fixed', top: 0, left: 0, width: 0, height: 0, overflow: 'visible', zIndex: 9999 }
+    : { width: '100%', height: '560px', position: 'relative' }
+
+  // loading / empty 状态:全屏模式下铺满 viewport 居中显示提示,普通模式下走 inline 占位
+  const renderStatus = (text: string) => {
+    if (isExpanded) {
+      return (
+        <div style={outerStyle}>
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            backgroundColor: fullscreenBg,
+            color: '#64748b', fontSize: 14,
+          }}>
+            {text}
+            <button
+              onClick={() => { setIsExpanded(false); onClose?.() }}
+              style={{
+                position: 'absolute', top: 12, right: 12,
+                padding: '6px 14px', borderRadius: 4,
+                border: '1px solid rgba(148,163,184,0.3)',
+                background: btnBg, color: btnText,
+                fontSize: 13, cursor: 'pointer',
+              }}
+            >
+              退出全屏
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>{text}</div>
+  }
+
+  if (loading) return renderStatus('加载图表数据中...')
+  if (data.length === 0) return renderStatus('暂无K线数据')
 
   return (
-    <div style={{ width: '100%', height: '560px', position: 'relative' }}>
+    <div style={outerStyle}>
       <div style={{
         width: isExpanded ? '100vw' : '100%',
         height: isExpanded ? '100vh' : '100%',
@@ -453,23 +517,31 @@ export function UnifiedChart({ code, quote: propQuote }: Props) {
       }}>
         <div style={{
           position: 'absolute', top: 12, left: 12, zIndex: 10000,
-          pointerEvents: 'none',
+          display: 'flex', alignItems: 'center', gap: 12,
         }}>
-          <span style={{ color: hintText, fontSize: 11 }}>
-            {isExpanded ? '双击 / Esc 回到原来的样式' : '双击能扩展到全窗口'}
+          <span style={{ color: hintText, fontSize: 11, pointerEvents: 'none' }}>
+            {isExpanded ? '双击 / Esc 关闭' : '双击能扩展到全窗口'}
           </span>
-        </div>
-        {isExpanded && (
-          <button onClick={() => setIsExpanded(false)} style={{
-            position: 'absolute', top: 12, right: 12, zIndex: 10000,
-            padding: '6px 14px', borderRadius: 4,
+          <button onClick={handleRefresh} disabled={refreshing} title="重新拉取全量历史K线（绕过缓存）" style={{
+            padding: '4px 10px', borderRadius: 4,
             border: '1px solid rgba(148,163,184,0.3)',
             background: btnBg, color: btnText,
-            fontSize: 13, cursor: 'pointer',
+            fontSize: 12, cursor: refreshing ? 'wait' : 'pointer',
+            opacity: refreshing ? 0.6 : 1,
           }}>
-            退出全屏
+            {refreshing ? '刷新中…' : '刷新K线'}
           </button>
-        )}
+          {isExpanded && (
+            <button onClick={() => { setIsExpanded(false); onClose?.() }} style={{
+              padding: '4px 10px', borderRadius: 4,
+              border: '1px solid rgba(148,163,184,0.3)',
+              background: btnBg, color: btnText,
+              fontSize: 12, cursor: 'pointer',
+            }}>
+              退出全屏
+            </button>
+          )}
+        </div>
         <div ref={chartRef} className="unified-chart-container" style={{ width: '100%', height: '100%' }} />
       </div>
     </div>

@@ -26,6 +26,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/xuri/excelize/v2"
+	"golang.org/x/sync/singleflight"
 )
 
 // debugLog 直接写入日志文件，确保日志被记录
@@ -59,8 +60,7 @@ type App struct {
 	ctx             context.Context
 	storage         *Storage
 	stocks          []StockInfo // 内存中的股票代码库
-	analysisMu      sync.Mutex
-	analysisLocks   map[string]*sync.Mutex
+	analysisGroup   singleflight.Group     // 同股票同 flag 的并发分析请求自动合并
 	dataRouter      *downloader.DataRouter // 数据源路由
 	riskSensitivity string                 // 风险警示敏感度
 	appConfig       *AppConfig             // 应用配置（自动更新等）
@@ -468,7 +468,7 @@ func (a *App) startBackgroundMarketCacheUpdate() {
 
 	fmt.Println("[MarketCache] 开始后台更新全市场缓存...")
 	start := time.Now()
-	err := a.marketCache.UpdateAll(sflClient, func(p downloader.UpdateProgress) {
+	err := a.marketCache.UpdateAll(a.ctx, sflClient, func(p downloader.UpdateProgress) {
 		if p.Stage == "done" {
 			fmt.Printf("[MarketCache] 更新完成: %s (耗时 %.1fs)\n", p.Message, time.Since(start).Seconds())
 		} else {
@@ -519,7 +519,7 @@ func (a *App) RefreshMarketCache() (string, error) {
 
 	go func() {
 		start := time.Now()
-		err := a.marketCache.UpdateAll(sflClient, func(p downloader.UpdateProgress) {
+		err := a.marketCache.UpdateAll(a.ctx, sflClient, func(p downloader.UpdateProgress) {
 			fmt.Printf("[MarketCache] %s: %s\n", p.Stage, p.Message)
 		})
 		if err != nil {
@@ -821,11 +821,11 @@ func (a *App) GetWatchlistActivity() ([]WatchlistActivitySummary, error) {
 			var quote *downloader.StockQuote
 			var kErr, qErr error
 			if a.dataRouter != nil {
-				klines, kErr = a.dataRouter.FetchKlines(market, pureCode, 60)
-				quote, qErr = a.dataRouter.FetchQuote(market, pureCode)
+				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60)
+				quote, qErr = a.dataRouter.FetchQuote(a.ctx, market, pureCode)
 			} else {
-				klines, kErr = downloader.FetchStockKlines(market, pureCode, 60)
-				quote, qErr = downloader.FetchStockQuote(market, pureCode)
+				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60)
+				quote, qErr = downloader.FetchStockQuote(a.ctx, market, pureCode)
 			}
 			if kErr != nil || len(klines) < 20 {
 				fmt.Printf("[GetWatchlistActivity] %s klines err=%v len=%d\n", item.Code, kErr, len(klines))
@@ -841,9 +841,9 @@ func (a *App) GetWatchlistActivity() ([]WatchlistActivitySummary, error) {
 			}
 			var profile *downloader.StockProfile
 			if a.dataRouter != nil {
-				profile, _ = a.dataRouter.FetchProfile(market, pureCode)
+				profile, _ = a.dataRouter.FetchProfile(a.ctx, market, pureCode)
 			} else {
-				profile, _ = downloader.FetchStockProfile(market, pureCode)
+				profile, _ = downloader.FetchStockProfile(a.ctx, market, pureCode)
 			}
 			industry := ""
 			if profile != nil {
@@ -938,11 +938,11 @@ func (a *App) FetchMissingActivity(codes []string) (*FetchMissingActivityResult,
 			var quote *downloader.StockQuote
 			var kErr, qErr error
 			if a.dataRouter != nil {
-				klines, kErr = a.dataRouter.FetchKlines(market, pureCode, 60)
-				quote, qErr = a.dataRouter.FetchQuote(market, pureCode)
+				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60)
+				quote, qErr = a.dataRouter.FetchQuote(a.ctx, market, pureCode)
 			} else {
-				klines, kErr = downloader.FetchStockKlines(market, pureCode, 60)
-				quote, qErr = downloader.FetchStockQuote(market, pureCode)
+				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60)
+				quote, qErr = downloader.FetchStockQuote(a.ctx, market, pureCode)
 			}
 			if kErr != nil || len(klines) < 20 {
 				fmt.Printf("[FetchMissingActivity] %s klines err=%v len=%d\n", c, kErr, len(klines))
@@ -964,9 +964,9 @@ func (a *App) FetchMissingActivity(codes []string) (*FetchMissingActivityResult,
 			}
 			var profile *downloader.StockProfile
 			if a.dataRouter != nil {
-				profile, _ = a.dataRouter.FetchProfile(market, pureCode)
+				profile, _ = a.dataRouter.FetchProfile(a.ctx, market, pureCode)
 			} else {
-				profile, _ = downloader.FetchStockProfile(market, pureCode)
+				profile, _ = downloader.FetchStockProfile(a.ctx, market, pureCode)
 			}
 			industry := ""
 			if profile != nil {
@@ -1282,7 +1282,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 
 	// 1. 优先尝试 DataRouter（StockFinLens 数据源）
 	if a.dataRouter != nil && market != "HK" {
-		tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
+		tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
 		if tErr == nil && tfd != nil {
 			data = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
 			if data != nil && len(data.Years) > 0 {
@@ -1296,7 +1296,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 
 	// 2. Fallback 到原有下载链（东方财富）
 	if data == nil {
-		data, err = downloader.DownloadFinancialReports(market, code, maxYears)
+		data, err = downloader.DownloadFinancialReports(a.ctx, market, code, maxYears)
 		if err != nil {
 			return nil, fmt.Errorf("下载财报失败: %w", err)
 		}
@@ -1315,7 +1315,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 
 		if sourceName == "东方财富" && a.dataRouter != nil && market != "HK" {
 			// 主源是东财，尝试 StockFinLens
-			tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
+			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
 			if tErr == nil && tfd != nil {
 				altData = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
 				if altData != nil && len(altData.Years) > 0 {
@@ -1324,7 +1324,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 			}
 		} else if sourceName == "StockFinLens" {
 			// 主源是 StockFinLens，尝试东财
-			altData, _ = downloader.DownloadFinancialReports(market, code, maxYears)
+			altData, _ = downloader.DownloadFinancialReports(a.ctx, market, code, maxYears)
 			if altData != nil && len(altData.Years) > 0 {
 				altSourceName = "东方财富"
 			}
@@ -1365,7 +1365,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 			}
 		}
 		if allZero && hasDividendField {
-			if dividendMap, err := downloader.FetchCashFlowDividendFromEastMoney(market, code, len(data.Years)); err == nil && len(dividendMap) > 0 {
+			if dividendMap, err := downloader.FetchCashFlowDividendFromEastMoney(a.ctx, market, code, len(data.Years)); err == nil && len(dividendMap) > 0 {
 				if _, ok := data.CashFlow["分配股利、利润或偿付利息支付的现金"]; !ok {
 					data.CashFlow["分配股利、利润或偿付利息支付的现金"] = make(map[string]float64)
 				}
@@ -1387,7 +1387,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 	}
 
 	// 多源校验
-	validation, _ := downloader.ValidateWithDatacenter(market, code, data)
+	validation, _ := downloader.ValidateWithDatacenter(a.ctx, market, code, data)
 
 	// 归档历史版本（使用Windows安全的时间格式）
 	_ = a.storage.ArchiveStockData(symbol, HistoryMeta{
@@ -1467,7 +1467,7 @@ func (a *App) DownloadComparableReports(symbol string) (*DownloadResult, error) 
 		var data *downloader.FinancialReportData
 		// 优先尝试 DataRouter
 		if a.dataRouter != nil && market != "HK" {
-			tfd, tErr := a.dataRouter.FetchFinancialData(market, code)
+			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
 			if tErr == nil && tfd != nil {
 				data = a.dataRouter.ConvertToFinancialReportData(tfd, comp)
 				if data == nil || len(data.Years) == 0 {
@@ -1478,7 +1478,7 @@ func (a *App) DownloadComparableReports(symbol string) (*DownloadResult, error) 
 		// Fallback
 		if data == nil {
 			var dErr error
-			data, dErr = downloader.DownloadFinancialReports(market, code)
+			data, dErr = downloader.DownloadFinancialReports(a.ctx, market, code)
 			if dErr != nil {
 				fmt.Printf("[Comparable] download failed for %s: %v\n", comp, dErr)
 				failed = append(failed, comp)
@@ -1652,9 +1652,9 @@ func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
 	if a.storage == nil {
 		return nil, fmt.Errorf("存储未初始化")
 	}
-	// 优先读取本地缓存（分析报告生成时保存的K线数据）
-	// 旧缓存为250条，现需375条（1.5年）支撑全屏250条左侧指标准确性
-	if cached, err := a.storage.LoadStockKlines(symbol); err == nil && len(cached) >= 300 {
+	// 缓存命中阈值放宽到 100(基本是"非空检查"):港股新股(上市不到 8 年)总条数可能 < 2000,
+	// 旧的 375 条 A 股缓存也允许复用。分析时会写入更全的数据，自然刷新。
+	if cached, err := a.storage.LoadStockKlines(symbol); err == nil && len(cached) >= 100 {
 		// 检查缓存的K线是否有换手率，如果没有，尝试用 quote 补算
 		hasTurnover := false
 		for _, k := range cached {
@@ -1689,19 +1689,82 @@ func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
 	market := strings.ToUpper(parts[1])
 	var klist []downloader.KlineData
 	var err error
+	// SFL 启用时 DataRouter 内部会拉全量历史（忽略 limit）;非 SFL 兜底链路按 2500 条拉(约 10 年)
 	if a.dataRouter != nil {
-		klist, err = a.dataRouter.FetchKlines(market, code, 375)
+		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
 	} else {
-		klist, err = downloader.FetchStockKlines(market, code, 375)
+		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
 	}
-	if err != nil {
-		debugLog("[GetStockKlines] %s FetchStockKlines error: %v", symbol, err)
-		return nil, err
+
+	// 远程全部失败时回退到 cache(哪怕过时 / 条数少也比看不到强;
+	// 典型场景:港股 tushare hk_daily 1次/分钟限速 + 其它源不支持港股)
+	if err != nil || len(klist) == 0 {
+		if cached, cErr := a.storage.LoadStockKlines(symbol); cErr == nil && len(cached) > 0 {
+			debugLog("[GetStockKlines] %s remote failed (err=%v, len=%d), falling back to cache (len=%d)", symbol, err, len(klist), len(cached))
+			return cached, nil
+		}
+		if err != nil {
+			debugLog("[GetStockKlines] %s FetchStockKlines error: %v (no cache fallback)", symbol, err)
+			return nil, err
+		}
 	}
+
 	if len(klist) > 0 {
 		last := klist[len(klist)-1]
 		debugLog("[GetStockKlines] %s fetched %d klines, last={Time:%s Open:%.2f Close:%.2f High:%.2f Low:%.2f}", symbol, len(klist), last.Time, last.Open, last.Close, last.High, last.Low)
 	}
+	return klist, nil
+}
+
+// RefreshStockKlines 强制从远程重新拉取K线（绕过本地缓存）并写回 klines.json。
+// 用于用户主动点"刷新"按钮：早期版本写入的旧缓存可能只有几百条，导致前端 dataZoom 无法拖到上市初期。
+func (a *App) RefreshStockKlines(symbol string) ([]downloader.KlineData, error) {
+	if a.storage == nil {
+		return nil, fmt.Errorf("存储未初始化")
+	}
+	parts := strings.Split(symbol, ".")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("无效的股票代码格式: %s", symbol)
+	}
+	code := parts[0]
+	market := strings.ToUpper(parts[1])
+
+	var klist []downloader.KlineData
+	var err error
+	if a.dataRouter != nil {
+		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
+	} else {
+		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
+	}
+	if err != nil {
+		debugLog("[RefreshStockKlines] %s remote fetch failed: %v", symbol, err)
+		return nil, err
+	}
+	if len(klist) == 0 {
+		return nil, fmt.Errorf("远程未返回K线数据")
+	}
+
+	// 远程数据通常缺换手率，用 quote 的流通市值/现价反推流通股本后补算
+	hasTurnover := false
+	for _, k := range klist {
+		if k.TurnoverRate > 0 {
+			hasTurnover = true
+			break
+		}
+	}
+	if !hasTurnover {
+		if quote, qErr := a.GetStockQuote(symbol); qErr == nil && quote != nil && quote.CirculatingMarketCap > 0 && quote.CurrentPrice > 0 {
+			circulatingShares := quote.CirculatingMarketCap / quote.CurrentPrice
+			for i := range klist {
+				klist[i].TurnoverRate = (klist[i].Volume * 100 / circulatingShares) * 100
+			}
+		}
+	}
+
+	if err := a.storage.SaveStockKlines(symbol, klist); err != nil {
+		debugLog("[RefreshStockKlines] %s save cache error: %v", symbol, err)
+	}
+	debugLog("[RefreshStockKlines] %s refreshed %d klines, first=%s last=%s", symbol, len(klist), klist[0].Time, klist[len(klist)-1].Time)
 	return klist, nil
 }
 
@@ -1737,9 +1800,9 @@ func (a *App) GetStockQuote(symbol string) (*downloader.StockQuote, error) {
 	// 从网络获取（通过数据源路由）
 	var quote *downloader.StockQuote
 	if a.dataRouter != nil {
-		quote, err = a.dataRouter.FetchQuote(market, code)
+		quote, err = a.dataRouter.FetchQuote(a.ctx, market, code)
 	} else {
-		quote, err = downloader.FetchStockQuote(market, code)
+		quote, err = downloader.FetchStockQuote(a.ctx, market, code)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("获取行情失败: %w", err)
@@ -1747,7 +1810,7 @@ func (a *App) GetStockQuote(symbol string) (*downloader.StockQuote, error) {
 
 	// 如果启用了数据源每日指标，用高质量数据补充/覆盖 PE/PB/市值/换手率等
 	if a.dataRouter != nil && a.dataRouter.IsUseForQuote() {
-		if metrics, mErr := a.dataRouter.FetchDailyMetrics(market, code, ""); mErr == nil && metrics != nil {
+		if metrics, mErr := a.dataRouter.FetchDailyMetrics(a.ctx, market, code, ""); mErr == nil && metrics != nil {
 			if metrics.PE > 0 {
 				quote.PE = metrics.PE
 			}
@@ -1959,7 +2022,7 @@ func (a *App) GetRiskRadar(symbol string, industry string) ([]analyzer.RiskRadar
 		return analyzer.BuildRiskRadar(snapshot.StepResults, nil, snapshot.Years, industry), nil
 	}
 	// 无快照则重新执行分析
-	report, err := analyzer.RunAnalysis(a.storage.DataDir(), symbol)
+	report, err := analyzer.RunAnalysis(a.storage.DataDir(), symbol, analyzer.AnalysisOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -2003,9 +2066,9 @@ func (a *App) GetStockProfile(symbol string) (*StockProfile, error) {
 	// 从网络获取
 	var dp *downloader.StockProfile
 	if a.dataRouter != nil {
-		dp, err = a.dataRouter.FetchProfile(market, code)
+		dp, err = a.dataRouter.FetchProfile(a.ctx, market, code)
 	} else {
-		dp, err = downloader.FetchStockProfile(market, code)
+		dp, err = downloader.FetchStockProfile(a.ctx, market, code)
 	}
 	if err != nil {
 		// 网络失败时回退到过期缓存（如果有）
@@ -2133,9 +2196,9 @@ func (a *App) GetStockConcepts(symbol string) (*downloader.StockConcepts, error)
 
 	var concepts *downloader.StockConcepts
 	if a.dataRouter != nil {
-		concepts, err = a.dataRouter.FetchConcepts(market, code, changePercent)
+		concepts, err = a.dataRouter.FetchConcepts(a.ctx, market, code, changePercent)
 	} else {
-		concepts, err = downloader.FetchStockConcepts(market, code, changePercent)
+		concepts, err = downloader.FetchStockConcepts(a.ctx, market, code, changePercent)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("获取概念数据失败: %w", err)
@@ -2550,7 +2613,7 @@ func (a *App) GetIndustryMetrics(industry string) (*analyzer.IndustryMetrics, bo
 // FetchHotConcepts 获取当日热门概念排行（综合排序）
 // topN 为返回前 N 个概念，若 <=0 则返回全部
 func (a *App) FetchHotConcepts(topN int) (*downloader.HotConceptBoard, error) {
-	board, err := downloader.FetchHotConceptBoard(a.storage.DataDir(), topN)
+	board, err := downloader.FetchHotConceptBoard(a.ctx, a.storage.DataDir(), topN)
 	if err != nil {
 		return nil, fmt.Errorf("获取热门概念失败: %w", err)
 	}
@@ -2569,7 +2632,7 @@ func (a *App) FetchHotConceptHistory(days int) ([]downloader.HotConceptHistoryIt
 
 // FetchHotConceptConstituents 获取指定概念板块的成分股列表
 func (a *App) FetchHotConceptConstituents(conceptCode string) ([]downloader.ConceptConstituent, error) {
-	cons, err := downloader.FetchConceptConstituents(conceptCode)
+	cons, err := downloader.FetchConceptConstituents(a.ctx, conceptCode)
 	if err != nil {
 		return nil, fmt.Errorf("获取成分股失败: %w", err)
 	}
@@ -2770,7 +2833,7 @@ func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickA
 				mu.Unlock()
 			}
 		}()
-		sentiment, err := downloader.FetchStockSentiment(marketUpper, code)
+		sentiment, err := downloader.FetchStockSentiment(a.ctx, marketUpper, code)
 		if err != nil || sentiment == nil {
 			mu.Lock()
 			result.HasSentimentData = false
@@ -2805,7 +2868,7 @@ func (a *App) QuickAnalyzeStock(code, name, market, conceptCode string) (*QuickA
 		}()
 		if a.dataRouter != nil && a.dataRouter.IsUseForMoneyflow() {
 			today := time.Now().Format("20060102")
-			items, err := a.dataRouter.FetchMoneyflow(marketUpper, code, today, today)
+			items, err := a.dataRouter.FetchMoneyflow(a.ctx, marketUpper, code, today, today)
 			if err == nil && len(items) > 0 {
 				item := items[0]
 				smNet := item.BuySmAmount - item.SellSmAmount
@@ -3085,7 +3148,7 @@ func (a *App) VerifySFLToken(token string) (*SFLVerifyResult, error) {
 	}
 	realToken := decodeToken(token)
 	client := downloader.NewSFLClient(realToken)
-	if err := client.VerifyToken(); err != nil {
+	if err := client.VerifyToken(a.ctx); err != nil {
 		return &SFLVerifyResult{Success: false, Message: fmt.Sprintf("验证失败: %v", err)}, nil
 	}
 	return &SFLVerifyResult{Success: true, Message: "验证通过，授权码有效"}, nil
@@ -3143,7 +3206,7 @@ func (a *App) GetStockMoneyflow(symbol string, days int) (*StockMoneyflowResult,
 	end := time.Now().Format("20060102")
 	start := time.Now().AddDate(0, 0, -(days+1)*3).Format("20060102")
 
-	items, err := a.dataRouter.FetchMoneyflow(market, code, start, end)
+	items, err := a.dataRouter.FetchMoneyflow(a.ctx, market, code, start, end)
 	if err != nil {
 		fmt.Printf("[GetStockMoneyflow] %s %s-%s error: %v\n", symbol, start, end, err)
 		return &StockMoneyflowResult{Symbol: symbol, HasData: false, Summary: fmt.Sprintf("资金流向获取失败: %v", err)}, nil

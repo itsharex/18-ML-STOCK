@@ -4,7 +4,7 @@ import {
   DownloadUpdate,
   ApplyUpdate,
   SkipVersion,
-} from '../wailsjs/go/main/App'
+} from './api'
 import { EventsOn, EventsOff } from '../wailsjs/runtime'
 import { BrowserOpenURL } from '../wailsjs/runtime'
 

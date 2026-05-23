@@ -8,7 +8,7 @@ import {
   type ISeriesApi,
 } from 'lightweight-charts'
 import type { downloader } from '../wailsjs/go/models'
-import { GetStockKlines } from '../wailsjs/go/main/App'
+import { GetStockKlines } from './api'
 
 type KlineData = downloader.KlineData
 

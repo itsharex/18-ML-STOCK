@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,17 +21,18 @@ type SFLClient struct {
 	client  *http.Client
 }
 
-// NewSFLClient 创建 SFL 客户端
+// NewSFLClient 创建 SFL 客户端。Transport 复用包级 sharedTransport（连接池）。
+// 不设 Client.Timeout —— 用 per-call ctx.WithTimeout 控制。
 func NewSFLClient(token string) *SFLClient {
 	return &SFLClient{
 		token:   token,
 		baseURL: sflBaseURL,
-		client:  &http.Client{Timeout: 20 * time.Second},
+		client:  &http.Client{Transport: sharedTransport},
 	}
 }
 
 // query 通用查询方法
-func (c *SFLClient) query(apiName string, params map[string]interface{}, fields []string) (*sflResponse, error) {
+func (c *SFLClient) query(ctx context.Context, apiName string, params map[string]interface{}, fields []string) (*sflResponse, error) {
 	reqBody := map[string]interface{}{
 		"api_name": apiName,
 		"token":    c.token,
@@ -45,11 +47,14 @@ func (c *SFLClient) query(apiName string, params map[string]interface{}, fields 
 		return nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.baseURL, bytes.NewReader(bodyBytes))
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(rctx, "POST", c.baseURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", defaultUA)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -146,6 +151,8 @@ func toTsCode(market, code string) string {
 		return code + ".SZ"
 	case "BJ":
 		return code + ".BJ"
+	case "HK":
+		return code + ".HK"
 	default:
 		return code + ".SH"
 	}
@@ -181,14 +188,14 @@ type SFLStockBasic struct {
 }
 
 // FetchStockBasic 获取股票基础信息
-func (c *SFLClient) FetchStockBasic(tsCode string) (*SFLStockBasic, error) {
+func (c *SFLClient) FetchStockBasic(ctx context.Context, tsCode string) (*SFLStockBasic, error) {
 	params := map[string]interface{}{}
 	if tsCode != "" {
 		params["ts_code"] = tsCode
 	}
 	fields := []string{"ts_code", "symbol", "name", "area", "industry", "market", "list_date", "is_hs"}
 
-	resp, err := c.query("stock_basic", params, fields)
+	resp, err := c.query(ctx, "stock_basic", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -211,11 +218,11 @@ func (c *SFLClient) FetchStockBasic(tsCode string) (*SFLStockBasic, error) {
 }
 
 // FetchAllStockBasic 批量获取全市场股票基础信息（不带 ts_code 参数）
-func (c *SFLClient) FetchAllStockBasic() ([]SFLStockBasic, error) {
+func (c *SFLClient) FetchAllStockBasic(ctx context.Context) ([]SFLStockBasic, error) {
 	params := map[string]interface{}{"list_status": "L"} // 只取上市状态的股票
 	fields := []string{"ts_code", "symbol", "name", "area", "industry", "market", "list_date", "is_hs"}
 
-	resp, err := c.query("stock_basic", params, fields)
+	resp, err := c.query(ctx, "stock_basic", params, fields)
 	if err != nil {
 		return nil, fmt.Errorf("stock_basic 全量查询失败: %w", err)
 	}
@@ -240,8 +247,18 @@ func (c *SFLClient) FetchAllStockBasic() ([]SFLStockBasic, error) {
 // ========== 日线行情 ==========
 
 // FetchDaily 获取日线行情，返回 KlineData（数据源 daily 接口）
-func (c *SFLClient) FetchDaily(market, code, startDate, endDate string) ([]KlineData, error) {
+//
+// market="HK" 走 tushare 的 hk_daily 接口（字段与 daily 一致，但港股已自带后复权语义，
+// 不再调用 adj_factor）；其它市场走 daily + adj_factor 前复权。
+func (c *SFLClient) FetchDaily(ctx context.Context, market, code, startDate, endDate string) ([]KlineData, error) {
 	tsCode := toTsCode(market, code)
+	isHK := market == "HK"
+
+	apiName := "daily"
+	if isHK {
+		apiName = "hk_daily"
+	}
+
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
 		"start_date": startDate,
@@ -249,16 +266,19 @@ func (c *SFLClient) FetchDaily(market, code, startDate, endDate string) ([]Kline
 	}
 	fields := []string{"ts_code", "trade_date", "open", "high", "low", "close", "pre_close", "change", "pct_chg", "vol", "amount"}
 
-	resp, err := c.query("daily", params, fields)
+	resp, err := c.query(ctx, apiName, params, fields)
 	if err != nil {
 		return nil, err
 	}
 	if len(resp.Data.Items) == 0 {
-		return nil, fmt.Errorf("daily 无数据: %s", tsCode)
+		return nil, fmt.Errorf("%s 无数据: %s", apiName, tsCode)
 	}
 
-	// 获取复权因子（用于前复权）
-	adjFactors, _ := c.fetchAdjFactors(tsCode, startDate, endDate)
+	// A 股取复权因子做前复权;港股 hk_daily 没有对应接口，跳过。
+	var adjFactors map[string]float64
+	if !isHK {
+		adjFactors, _ = c.fetchAdjFactors(ctx, tsCode, startDate, endDate)
+	}
 
 	idx := buildFieldIndex(resp.Data.Fields)
 	result := make([]KlineData, 0, len(resp.Data.Items))
@@ -273,7 +293,7 @@ func (c *SFLClient) FetchDaily(market, code, startDate, endDate string) ([]Kline
 			Volume: getFloat(item, idx, "vol"),
 			Amount: getFloat(item, idx, "amount") * 1000, // 数据源 daily 接口 amount 单位为千元，转换为元
 		}
-		// 前复权处理
+		// 前复权处理（仅 A 股）
 		if len(adjFactors) > 0 {
 			k = applyAdjFactor(k, adjFactors, tradeDate)
 		}
@@ -287,13 +307,13 @@ func (c *SFLClient) FetchDaily(market, code, startDate, endDate string) ([]Kline
 }
 
 // fetchAdjFactors 获取复权因子
-func (c *SFLClient) fetchAdjFactors(tsCode, startDate, endDate string) (map[string]float64, error) {
+func (c *SFLClient) fetchAdjFactors(ctx context.Context, tsCode, startDate, endDate string) (map[string]float64, error) {
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
 		"start_date": startDate,
 		"end_date":   endDate,
 	}
-	resp, err := c.query("adj_factor", params, []string{"trade_date", "adj_factor"})
+	resp, err := c.query(ctx, "adj_factor", params, []string{"trade_date", "adj_factor"})
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +361,7 @@ func applyAdjFactor(k KlineData, adjFactors map[string]float64, tradeDate string
 // ========== 每日指标 ==========
 
 // FetchDailyBasic 获取每日指标（PE/PB/市值/换手率/股息率等）
-func (c *SFLClient) FetchDailyBasic(market, code, tradeDate string) (*StockQuote, error) {
+func (c *SFLClient) FetchDailyBasic(ctx context.Context, market, code, tradeDate string) (*StockQuote, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code": tsCode,
@@ -353,7 +373,7 @@ func (c *SFLClient) FetchDailyBasic(market, code, tradeDate string) (*StockQuote
 		"pe", "pe_ttm", "pb", "ps", "ps_ttm", "dv_ratio", "dv_ttm",
 		"total_share", "float_share", "free_share", "total_mv", "circ_mv"}
 
-	resp, err := c.query("daily_basic", params, fields)
+	resp, err := c.query(ctx, "daily_basic", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -398,7 +418,7 @@ type SFLIncomeItem struct {
 }
 
 // FetchIncome 获取利润表
-func (c *SFLClient) FetchIncome(market, code, startDate, endDate string) ([]SFLIncomeItem, error) {
+func (c *SFLClient) FetchIncome(ctx context.Context, market, code, startDate, endDate string) ([]SFLIncomeItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -408,7 +428,7 @@ func (c *SFLClient) FetchIncome(market, code, startDate, endDate string) ([]SFLI
 	fields := []string{"ts_code", "end_date", "ann_date", "revenue", "total_profit", "n_income", "n_income_attr_p", "basic_eps",
 		"operate_profit", "total_cogs", "oper_cost", "sell_exp", "admin_exp", "fin_exp", "rd_exp"}
 
-	resp, err := c.query("income", params, fields)
+	resp, err := c.query(ctx, "income", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +502,7 @@ type SFLBalanceItem struct {
 }
 
 // FetchBalanceSheet 获取资产负债表
-func (c *SFLClient) FetchBalanceSheet(market, code, startDate, endDate string) ([]SFLBalanceItem, error) {
+func (c *SFLClient) FetchBalanceSheet(ctx context.Context, market, code, startDate, endDate string) ([]SFLBalanceItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -498,7 +518,7 @@ func (c *SFLClient) FetchBalanceSheet(market, code, startDate, endDate string) (
 		"total_cur_liab", "total_ncl", "defer_tax_assets", "defer_tax_liab",
 		"share_capital", "cap_rese", "surplus_rese", "undistributed_profit", "minority_int"}
 
-	resp, err := c.query("balancesheet", params, fields)
+	resp, err := c.query(ctx, "balancesheet", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -570,7 +590,7 @@ type SFLCashflowItem struct {
 }
 
 // FetchCashflow 获取现金流量表
-func (c *SFLClient) FetchCashflow(market, code, startDate, endDate string) ([]SFLCashflowItem, error) {
+func (c *SFLClient) FetchCashflow(ctx context.Context, market, code, startDate, endDate string) ([]SFLCashflowItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -581,7 +601,7 @@ func (c *SFLClient) FetchCashflow(market, code, startDate, endDate string) ([]SF
 		"free_cashflow", "c_sales_goods", "c_paid_to_for_empl", "c_paid_for_taxes", "c_pay_for_others",
 		"c_pay_acq_const_foliot", "c_div_profits_or_int_oop", "fa_ir_depreciation"}
 
-	resp, err := c.query("cashflow", params, fields)
+	resp, err := c.query(ctx, "cashflow", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -628,7 +648,7 @@ type SFLFinaIndicator struct {
 }
 
 // FetchFinaIndicator 获取财务指标
-func (c *SFLClient) FetchFinaIndicator(market, code, startDate, endDate string) ([]SFLFinaIndicator, error) {
+func (c *SFLClient) FetchFinaIndicator(ctx context.Context, market, code, startDate, endDate string) ([]SFLFinaIndicator, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -639,7 +659,7 @@ func (c *SFLClient) FetchFinaIndicator(market, code, startDate, endDate string) 
 		"grossprofit_margin", "netprofit_margin", "op_of_gr", "debt_to_assets",
 		"current_ratio", "quick_ratio", "ocf_to_sales", "ocf_to_opincome", "roic", "ebitda"}
 
-	resp, err := c.query("fina_indicator", params, fields)
+	resp, err := c.query(ctx, "fina_indicator", params, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +707,7 @@ type SFLMoneyflowItem struct {
 }
 
 // FetchMoneyflow 获取个股资金流向
-func (c *SFLClient) FetchMoneyflow(market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
+func (c *SFLClient) FetchMoneyflow(ctx context.Context, market, code, startDate, endDate string) ([]SFLMoneyflowItem, error) {
 	tsCode := toTsCode(market, code)
 	params := map[string]interface{}{
 		"ts_code":    tsCode,
@@ -698,7 +718,7 @@ func (c *SFLClient) FetchMoneyflow(market, code, startDate, endDate string) ([]S
 		"buy_md_amount", "sell_md_amount", "buy_lg_amount", "sell_lg_amount",
 		"buy_elg_amount", "sell_elg_amount", "net_mf_amount"}
 
-	resp, err := c.query("moneyflow", params, fields)
+	resp, err := c.query(ctx, "moneyflow", params, fields)
 	if err != nil {
 		fmt.Printf("[SFL.FetchMoneyflow] %s query error: %v\n", tsCode, err)
 		return nil, err
@@ -738,8 +758,8 @@ type SFLConcept struct {
 }
 
 // FetchConceptList 获取概念板块列表
-func (c *SFLClient) FetchConceptList() ([]SFLConcept, error) {
-	resp, err := c.query("concept", map[string]interface{}{}, nil)
+func (c *SFLClient) FetchConceptList(ctx context.Context) ([]SFLConcept, error) {
+	resp, err := c.query(ctx, "concept", map[string]interface{}{}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -767,9 +787,9 @@ type SFLConceptStock struct {
 }
 
 // FetchConceptDetail 获取概念成分股
-func (c *SFLClient) FetchConceptDetail(conceptID string) ([]SFLConceptStock, error) {
+func (c *SFLClient) FetchConceptDetail(ctx context.Context, conceptID string) ([]SFLConceptStock, error) {
 	params := map[string]interface{}{"id": conceptID}
-	resp, err := c.query("concept_detail", params, nil)
+	resp, err := c.query(ctx, "concept_detail", params, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -792,7 +812,7 @@ func (c *SFLClient) FetchConceptDetail(conceptID string) ([]SFLConceptStock, err
 // FetchAllLatestFinaIndicator 批量获取全市场最新一期财务指标
 // tushare fina_indicator 接口支持不带 ts_code 返回全市场，但必须指定 end_date（报告期）
 // 策略：尝试最近 4 个报告期（年报→三季报→半年报→一季报），合并取每只股票的最新数据
-func (c *SFLClient) FetchAllLatestFinaIndicator() ([]SFLFinaIndicator, error) {
+func (c *SFLClient) FetchAllLatestFinaIndicator(ctx context.Context) ([]SFLFinaIndicator, error) {
 	fields := []string{"ts_code", "end_date", "roe", "roe_diluted", "roe_avg",
 		"grossprofit_margin", "netprofit_margin", "op_of_gr", "debt_to_assets",
 		"current_ratio", "quick_ratio", "ocf_to_sales", "ocf_to_opincome", "roic", "ebitda"}
@@ -816,7 +836,7 @@ func (c *SFLClient) FetchAllLatestFinaIndicator() ([]SFLFinaIndicator, error) {
 	latest := make(map[string]SFLFinaIndicator)
 	for _, endDate := range periods {
 		params := map[string]interface{}{"end_date": endDate}
-		resp, err := c.query("fina_indicator", params, fields)
+		resp, err := c.query(ctx, "fina_indicator", params, fields)
 		if err != nil {
 			continue // 单期失败不中断，继续下一期
 		}
@@ -862,9 +882,9 @@ func (c *SFLClient) FetchAllLatestFinaIndicator() ([]SFLFinaIndicator, error) {
 
 // FetchAllConceptMappings 获取全市场概念映射（股票代码 → 概念列表）
 // 策略：先获取概念列表，再逐概念获取成分股，反向构建映射
-func (c *SFLClient) FetchAllConceptMappings() (map[string][]string, error) {
+func (c *SFLClient) FetchAllConceptMappings(ctx context.Context) (map[string][]string, error) {
 	// 1. 获取概念列表
-	concepts, err := c.FetchConceptList()
+	concepts, err := c.FetchConceptList(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("获取概念列表失败: %w", err)
 	}
@@ -884,7 +904,7 @@ func (c *SFLClient) FetchAllConceptMappings() (map[string][]string, error) {
 		go func(id, name string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			stocks, err := c.FetchConceptDetail(id)
+			stocks, err := c.FetchConceptDetail(ctx, id)
 			if err != nil {
 				return
 			}
@@ -931,12 +951,12 @@ type SFLThsHotItem struct {
 }
 
 // FetchThsHot 获取同花顺热搜数据（概念板块、个股、行业等）
-func (c *SFLClient) FetchThsHot(tradeDate string) ([]SFLThsHotItem, error) {
+func (c *SFLClient) FetchThsHot(ctx context.Context, tradeDate string) ([]SFLThsHotItem, error) {
 	params := map[string]interface{}{}
 	if tradeDate != "" {
 		params["trade_date"] = tradeDate
 	}
-	resp, err := c.query("ths_hot", params, nil)
+	resp, err := c.query(ctx, "ths_hot", params, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -962,7 +982,7 @@ func (c *SFLClient) FetchThsHot(tradeDate string) ([]SFLThsHotItem, error) {
 }
 
 // VerifyToken 验证 Token 是否有效
-func (c *SFLClient) VerifyToken() error {
-	_, err := c.query("stock_basic", map[string]interface{}{"limit": 1}, []string{"ts_code"})
+func (c *SFLClient) VerifyToken(ctx context.Context) error {
+	_, err := c.query(ctx, "stock_basic", map[string]interface{}{"limit": 1}, []string{"ts_code"})
 	return err
 }

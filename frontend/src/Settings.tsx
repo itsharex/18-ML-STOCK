@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './Settings.css'
-import { GetSFLConfig, SaveSFLConfig, VerifySFLToken, CheckForUpdate, SetAutoCheckUpdate } from '../wailsjs/go/main/App'
+import { GetSFLConfig, SaveSFLConfig, VerifySFLToken, CheckForUpdate, SetAutoCheckUpdate } from './api'
 import type { main } from '../wailsjs/go/models'
 import { UpdateModal } from './UpdateModal'
 
@@ -180,7 +180,7 @@ export function Settings({
     saveSettings(newSettings)
   }
 
-  const version = '1.3.40'
+  const version = __APP_VERSION__
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateChecking(true)

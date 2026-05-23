@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as echarts from 'echarts'
 import type { main } from '../wailsjs/go/models'
-import { GetFinancialTrends } from '../wailsjs/go/main/App'
+import { GetFinancialTrends } from './api'
 
 interface Props {
   code: string

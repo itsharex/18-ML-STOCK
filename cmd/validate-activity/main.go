@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -84,21 +85,21 @@ func main() {
 		}
 
 		// 获取K线
-		klines, err := downloader.FetchStockKlines(market, s.Code, 60)
+		klines, err := downloader.FetchStockKlines(context.Background(), market, s.Code, 60)
 		if err != nil || len(klines) < 20 {
 			fmt.Printf("[%s] K线不足: %v\n", s.Code, err)
 			continue
 		}
 
 		// 获取行情
-		quote, err := downloader.FetchStockQuote(market, s.Code)
+		quote, err := downloader.FetchStockQuote(context.Background(), market, s.Code)
 		if err != nil || quote == nil || quote.CirculatingMarketCap <= 0 {
 			fmt.Printf("[%s] 行情缺失\n", s.Code)
 			continue
 		}
 
 		// 获取行业
-		profile, err := downloader.FetchStockProfile(market, s.Code)
+		profile, err := downloader.FetchStockProfile(context.Background(), market, s.Code)
 		industry := ""
 		if err == nil && profile != nil {
 			industry = profile.Industry

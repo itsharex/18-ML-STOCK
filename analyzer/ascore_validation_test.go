@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 func TestAScoreValidation(t *testing.T) {
 	if testing.Short() {
-		t.Skip("跳过网络测试，使用 -short 运行快速回归")
+		t.Skip("跳过实时网络测试（10 只股票真打东财 HTTP；发布前手动 go test ./... 跑一次作为外部接口 canary）")
 	}
 	stocks := []struct {
 		symbol string
@@ -40,7 +41,7 @@ func TestAScoreValidation(t *testing.T) {
 		}
 		code, market := parts[0], strings.ToUpper(parts[1])
 
-		fd, err := downloader.DownloadFinancialReports(market, code)
+		fd, err := downloader.DownloadFinancialReports(context.Background(), market, code)
 		if err != nil {
 			fmt.Printf("%-12s 数据下载失败: %v\n", s.symbol, err)
 			continue
