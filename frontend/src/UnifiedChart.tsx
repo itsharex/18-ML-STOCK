@@ -155,6 +155,53 @@ function fmt1(v: any): string {
   return n.toFixed(1)
 }
 
+// 日线聚合为周线
+function aggregateToWeekly(data: KlineData[]): KlineData[] {
+  if (data.length === 0) return []
+  const weeks: Record<string, KlineData[]> = {}
+  data.forEach((d) => {
+    const date = new Date(d.time)
+    const day = date.getDay()
+    const diff = date.getDate() - day + (day === 0 ? -6 : 1)
+    const monday = new Date(date)
+    monday.setDate(diff)
+    const key = monday.toISOString().slice(0, 10)
+    if (!weeks[key]) weeks[key] = []
+    weeks[key].push(d)
+  })
+  return Object.entries(weeks).map(([, bars]) => ({
+    time: bars[bars.length - 1].time,
+    open: bars[0].open,
+    close: bars[bars.length - 1].close,
+    high: Math.max(...bars.map((b) => b.high)),
+    low: Math.min(...bars.map((b) => b.low)),
+    volume: bars.reduce((sum, b) => sum + b.volume, 0),
+    amount: bars.reduce((sum, b) => sum + b.amount, 0),
+    turnoverRate: bars[bars.length - 1].turnoverRate,
+  }))
+}
+
+// 日线聚合为月线
+function aggregateToMonthly(data: KlineData[]): KlineData[] {
+  if (data.length === 0) return []
+  const months: Record<string, KlineData[]> = {}
+  data.forEach((d) => {
+    const key = d.time.slice(0, 7)
+    if (!months[key]) months[key] = []
+    months[key].push(d)
+  })
+  return Object.entries(months).map(([, bars]) => ({
+    time: bars[bars.length - 1].time,
+    open: bars[0].open,
+    close: bars[bars.length - 1].close,
+    high: Math.max(...bars.map((b) => b.high)),
+    low: Math.min(...bars.map((b) => b.low)),
+    volume: bars.reduce((sum, b) => sum + b.volume, 0),
+    amount: bars.reduce((sum, b) => sum + b.amount, 0),
+    turnoverRate: bars[bars.length - 1].turnoverRate,
+  }))
+}
+
 function loadMAConfig(): MAConfig {
   try {
     const saved = localStorage.getItem('unifiedChart_maConfig')
@@ -192,15 +239,15 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     setLocalQuote(propQuote)
   }, [propQuote])
 
-  // K 线数据加载（按周期）
+  // K 线数据加载（始终获取日线，前端按周期聚合）
   useEffect(() => {
     if (!code) return
     setLoading(true)
-    GetStockKlines(code, period)
+    GetStockKlines(code, 'daily')
       .then((list) => setRawData(list || []))
       .catch(() => setRawData([]))
       .finally(() => setLoading(false))
-  }, [code, period])
+  }, [code])
 
   // 自己获取行情（如果 propQuote 为 null/undefined）
   useEffect(() => {
@@ -216,17 +263,24 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
 
   const data = useMemo(() => {
     if (rawData.length === 0) return []
+    // 根据周期聚合数据
+    let aggregated = rawData
+    if (period === 'weekly') {
+      aggregated = aggregateToWeekly(rawData)
+    } else if (period === 'monthly') {
+      aggregated = aggregateToMonthly(rawData)
+    }
     const quote = localQuote
-    const hasTurnover = rawData.some(d => d.turnoverRate > 0)
+    const hasTurnover = aggregated.some(d => d.turnoverRate > 0)
     if (hasTurnover || !quote || quote.circulatingMarketCap <= 0 || quote.currentPrice <= 0) {
-      return rawData
+      return aggregated
     }
     const circulatingShares = quote.circulatingMarketCap / quote.currentPrice
-    return rawData.map(d => ({
+    return aggregated.map(d => ({
       ...d,
       turnoverRate: (d.volume * 100 / circulatingShares) * 100,
     }))
-  }, [rawData, localQuote])
+  }, [rawData, localQuote, period])
 
   useEffect(() => {
     if (!chartRef.current || data.length === 0) return
@@ -272,7 +326,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
       legend: {
         data: legendData,
         top: 8,
-        right: 90, // 为周期选择器+设置按钮留出空间
+        right: 130, // 为周期选择器+设置按钮留出空间
         textStyle: { color: '#94a3b8', fontSize: 11 },
         itemStyle: { borderWidth: 0 },
         itemGap: 8,
@@ -501,7 +555,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     if (!code || refreshing) return
     setRefreshing(true)
     try {
-      const list = await RefreshStockKlines(code, period)
+      const list = await RefreshStockKlines(code, 'daily')
       setRawData(list || [])
     } catch (e) {
       console.error('刷新K线失败:', e)
