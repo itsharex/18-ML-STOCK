@@ -214,6 +214,17 @@ function aggregateToMonthly(data: KlineData[]): KlineData[] {
   }))
 }
 
+// 统一日期格式为 YYYY-MM-DD，兼容 YYYYMMDD 和 YYYY/MM/DD
+function normalizeTime(time: string): string {
+  if (/^\d{8}$/.test(time)) {
+    return `${time.slice(0, 4)}-${time.slice(4, 6)}-${time.slice(6, 8)}`
+  }
+  if (/^\d{4}\/\d{2}\/\d{2}/.test(time)) {
+    return time.replace(/\//g, '-')
+  }
+  return time
+}
+
 function loadMAConfig(): MAConfig {
   try {
     const saved = localStorage.getItem('unifiedChart_maConfig')
@@ -256,7 +267,14 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     if (!code) return
     setLoading(true)
     GetStockKlines(code, 'daily')
-      .then((list) => setRawData(list || []))
+      .then((list) => {
+        // 统一日期格式（兼容腾讯 YYYYMMDD / 东财 YYYY-MM-DD / 网易 YYYY/MM/DD）
+        const normalized = (list || []).map((d) => ({
+          ...d,
+          time: normalizeTime(d.time),
+        }))
+        setRawData(normalized)
+      })
       .catch(() => setRawData([]))
       .finally(() => setLoading(false))
   }, [code])
@@ -603,39 +621,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     ? { position: 'fixed', top: 0, left: 0, width: 0, height: 0, overflow: 'visible', zIndex: 9999 }
     : { width: '100%', height: '560px', position: 'relative' }
 
-  // loading / empty 状态:全屏模式下铺满 viewport 居中显示提示,普通模式下走 inline 占位
-  const renderStatus = (text: string) => {
-    if (isExpanded) {
-      return (
-        <div style={outerStyle}>
-          <div style={{
-            position: 'fixed', inset: 0, zIndex: 9999,
-            display: 'flex', justifyContent: 'center', alignItems: 'center',
-            backgroundColor: fullscreenBg,
-            color: '#64748b', fontSize: 14,
-          }}>
-            {text}
-            <button
-              onClick={() => { setIsExpanded(false); onClose?.() }}
-              style={{
-                position: 'absolute', top: 12, right: 12,
-                padding: '6px 14px', borderRadius: 4,
-                border: '1px solid rgba(148,163,184,0.3)',
-                background: btnBg, color: btnText,
-                fontSize: 13, cursor: 'pointer',
-              }}
-            >
-              退出全屏
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>{text}</div>
-  }
-
-  if (loading) return renderStatus('加载图表数据中...')
-  if (data.length === 0) return renderStatus('暂无K线数据')
+  const overlayBg = isLightTheme ? 'rgba(243, 244, 246, 0.85)' : 'rgba(15, 23, 42, 0.85)'
 
   return (
     <div style={outerStyle}>
@@ -827,7 +813,22 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
           </div>
         )}
 
-        <div ref={chartRef} className="unified-chart-container" style={{ width: '100%', height: '100%' }} />
+        {/* 状态覆盖层：加载中或无数据时显示，避免 DOM 结构切换导致闪烁 */}
+        {(loading || data.length === 0) && (
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 100,
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            backgroundColor: isExpanded ? fullscreenBg : overlayBg,
+            color: '#64748b', fontSize: 14,
+          }}>
+            {loading ? '加载图表数据中...' : '暂无K线数据'}
+          </div>
+        )}
+
+        <div ref={chartRef} className="unified-chart-container" style={{
+          width: '100%', height: '100%',
+          visibility: loading || data.length === 0 ? 'hidden' : 'visible',
+        }} />
       </div>
     </div>
   )
