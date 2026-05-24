@@ -3045,9 +3045,15 @@ function App() {
                       )}
                     </span>
                     <span className="import-years">
-                      {downloadResult.years?.length
-                        ? `${downloadResult.years.length} 年: ${downloadResult.years.join(', ')}`
-                        : '无'}
+                      {(() => {
+                        const ys = downloadResult.years ?? []
+                        const qs = downloadResult.quarters ?? []
+                        if (ys.length === 0 && qs.length === 0) return '无'
+                        const parts: string[] = []
+                        if (ys.length > 0) parts.push(`${ys.length} 年报: ${ys.join(', ')}`)
+                        if (qs.length > 0) parts.push(`${qs.length} 季报: ${qs.join(', ')}`)
+                        return parts.join('；')
+                      })()}
                     </span>
                   </div>
                   {downloadResult.validation && downloadResult.validation.length > 0 && (

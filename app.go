@@ -114,10 +114,47 @@ type DownloadResult struct {
 	Success          bool                          `json:"success"`
 	Message          string                        `json:"message"`
 	Years            []string                      `json:"years"`
+	Quarters         []string                      `json:"quarters"`         // 非年报季度报告期（用于 TTM 口径）
 	Validation       []downloader.ValidationResult `json:"validation"`
 	SourceName       string                        `json:"sourceName"`       // 数据来源（StockFinLens / 东方财富 / 腾讯财经）
 	QualityScore     float64                       `json:"qualityScore"`     // 资产负债表质量得分 0-100
 	SourceSuggestion string                        `json:"sourceSuggestion"` // 数据源切换建议，空字符串表示无建议
+}
+
+// extractNonAnnualPeriods 从三表数据中提取所有非年报期间（YYYY-MM-DD 但非 12-31），降序返回
+func extractNonAnnualPeriods(data *downloader.FinancialReportData) []string {
+	if data == nil {
+		return nil
+	}
+	set := make(map[string]struct{})
+	collect := func(table map[string]map[string]float64) {
+		for _, byPeriod := range table {
+			for period := range byPeriod {
+				if len(period) == 10 && !strings.HasSuffix(period, "-12-31") {
+					set[period] = struct{}{}
+				}
+			}
+		}
+	}
+	collect(data.BalanceSheet)
+	collect(data.IncomeStatement)
+	collect(data.CashFlow)
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	// 降序排序
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			if out[i] < out[j] {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
 }
 
 // NewApp creates a new App application struct
@@ -1282,7 +1319,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 
 	// 1. 优先尝试 DataRouter（StockFinLens 数据源）
 	if a.dataRouter != nil && market != "HK" {
-		tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
+		tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code, maxYears)
 		if tErr == nil && tfd != nil {
 			data = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
 			if data != nil && len(data.Years) > 0 {
@@ -1315,7 +1352,7 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 
 		if sourceName == "东方财富" && a.dataRouter != nil && market != "HK" {
 			// 主源是东财，尝试 StockFinLens
-			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
+			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code, maxYears)
 			if tErr == nil && tfd != nil {
 				altData = a.dataRouter.ConvertToFinancialReportData(tfd, symbol)
 				if altData != nil && len(altData.Years) > 0 {
@@ -1397,10 +1434,14 @@ func (a *App) DownloadReports(symbol string, maxYears int) (*DownloadResult, err
 		Years:      data.Years,
 	})
 
+	// 从三表 keys union 中提取非年报期间（用于 UI 提示 + TTM 口径校对）
+	quarters := extractNonAnnualPeriods(data)
+
 	result := &DownloadResult{
 		Success:    true,
 		Message:    fmt.Sprintf("成功下载 %d 年的年报数据", len(data.Years)),
 		Years:      data.Years,
+		Quarters:   quarters,
 		Validation: validation,
 		SourceName: sourceName,
 	}
@@ -1465,9 +1506,9 @@ func (a *App) DownloadComparableReports(symbol string) (*DownloadResult, error) 
 		code := parts[0]
 		market := strings.ToUpper(parts[1])
 		var data *downloader.FinancialReportData
-		// 优先尝试 DataRouter
+		// 优先尝试 DataRouter（可比公司用默认 5 年窗口，FetchFinancialData 内部会兜底）
 		if a.dataRouter != nil && market != "HK" {
-			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code)
+			tfd, tErr := a.dataRouter.FetchFinancialData(a.ctx, market, code, 0)
 			if tErr == nil && tfd != nil {
 				data = a.dataRouter.ConvertToFinancialReportData(tfd, comp)
 				if data == nil || len(data.Years) == 0 {

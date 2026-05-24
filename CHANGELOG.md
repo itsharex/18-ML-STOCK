@@ -1,5 +1,28 @@
 # Changelog
 
+## [v1.4.0] - 2026-05-24
+
+### 新增 (Features)
+- **TTM 累加期间显示** (`analyzer/ttm.go`, `frontend/wailsjs/go/models.ts`)
+  - `TTMMetrics` 新增 `Periods []string` 字段，记录实际累加的报告期。
+  - 模块 3.4 TTM 报告顶部展示累加期间清单（如 `2025-09-30 + 2025-06-30 + 2025-03-31 + 2024-12-31`），不足 4 期时标注「TTM 口径不完整」，无季报数据则退化为年报口径并提示。
+  - `BuildTTMMetrics` 把传入累加函数的报告期由降序改为升序，避免最新一期 BPS/equity 取错。
+- **季度报告期保留与导入提示** (`downloader/data_router.go`, `app.go`, `frontend/src/App.tsx`)
+  - SFL 数据源在 `ConvertToFinancialReportData` 中除全部年报外，额外保留最近 3 个非年报季度（用于 TTM 3 季 + 1 年报累加成 12 个月口径）。
+  - `DownloadResult` 新增 `Quarters []string`，前端「导入年限」改为 `N 年报: ... ; M 季报: ...` 两段展示。
+  - `FetchFinancialData(ctx, market, code, maxYears)` 新增 `maxYears` 参数，按调用方传入的年数控制 SFL 接口起始时间窗口（缺省 5 年兜底）。
+
+### 优化 (Improvements)
+- **模块 5.2 重点政策方向布局** (`analyzer/report_modules.go`)
+  - 政策匹配度按 Level 1-5 分组，同档位合并到一行用「、」连接，由高到低排列。
+  - 信号条移到行首，名称放后面，整列对齐更整洁。
+- **macOS 应用更新流程** (`updater/updater_darwin.go`)
+  - 打开 DMG 后延迟 1.5s 主动退出当前进程，避免用户拖动 `.app` 到 Applications 时被提示「目标程序正在运行」。
+
+### 修复 (Fixes)
+- **中栏在窗口最大化/恢复后被压缩** (`frontend/src/App.css`)
+  - `.info-panel` 增加 `min-width: 300px` 与 `flex-shrink: 0`，防止 macOS 双击标题栏在最大化与原始尺寸切换时，flex 容器把中栏挤压成 0 宽度。
+
 ## [v1.3.40] - 2026-05-23
 
 ### 新增 (Features)

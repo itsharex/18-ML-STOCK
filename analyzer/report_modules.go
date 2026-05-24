@@ -430,20 +430,26 @@ func writeModule5(b *strings.Builder, policy *PolicyMatchData) {
 	b.WriteString(fmt.Sprintf("| **政策评分** | %d / 100 |\n", policy.Score))
 	b.WriteString("\n")
 
-	// 按匹配程度从高到低排序
-	sortedPolicies := make([]PolicyItem, len(policy.Policies))
-	copy(sortedPolicies, policy.Policies)
-	for i := 0; i < len(sortedPolicies)-1; i++ {
-		for j := i + 1; j < len(sortedPolicies); j++ {
-			if sortedPolicies[i].Level < sortedPolicies[j].Level {
-				sortedPolicies[i], sortedPolicies[j] = sortedPolicies[j], sortedPolicies[i]
-			}
+	// 按 Level 分组（1-5），同档位合并到一行，由高到低排列
+	groups := make(map[int][]string)
+	for _, p := range policy.Policies {
+		lv := p.Level
+		if lv < 1 {
+			lv = 1
 		}
+		if lv > 5 {
+			lv = 5
+		}
+		groups[lv] = append(groups[lv], p.Name)
 	}
 
 	b.WriteString("## 5.2 重点政策方向\n\n")
-	for _, p := range sortedPolicies {
-		b.WriteString(fmt.Sprintf("- **%s** `%s`\n", p.Name, policySignalText(p.Level)))
+	for lv := 5; lv >= 1; lv-- {
+		names, ok := groups[lv]
+		if !ok || len(names) == 0 {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("- `%s` **%s**\n", policySignalText(lv), strings.Join(names, "、")))
 	}
 	b.WriteString("\n")
 

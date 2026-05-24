@@ -7,14 +7,15 @@ import (
 
 // TTMMetrics 滚动 TTM 指标
 type TTMMetrics struct {
-	HasData       bool    `json:"hasData"`
-	Revenue       float64 `json:"revenue"`
-	NetProfit     float64 `json:"netProfit"`
-	OperatingCash float64 `json:"operatingCash"`
-	ROE           float64 `json:"roe"`
-	NetMargin     float64 `json:"netMargin"`
-	CashRatio     float64 `json:"cashRatio"` // 经营现金流/净利润
-	PeriodCount   int     `json:"periodCount"` // 实际累加的季度数
+	HasData       bool     `json:"hasData"`
+	Revenue       float64  `json:"revenue"`
+	NetProfit     float64  `json:"netProfit"`
+	OperatingCash float64  `json:"operatingCash"`
+	ROE           float64  `json:"roe"`
+	NetMargin     float64  `json:"netMargin"`
+	CashRatio     float64  `json:"cashRatio"` // 经营现金流/净利润
+	PeriodCount   int      `json:"periodCount"` // 实际累加的季度数
+	Periods       []string `json:"periods"`     // 实际累加的报告期（用于校对，时间升序）
 }
 
 // BuildTTMMetrics 构建最近 4 个季度的 TTM 滚动指标
@@ -40,12 +41,15 @@ func BuildTTMMetrics(data *FinancialData) *TTMMetrics {
 		return metrics
 	}
 
-	// 取最近 4 个季度
+	// 取最近 4 个季度（quarters 是降序，反转成升序传入累加便于展示）
 	count := 4
 	if len(quarters) < count {
 		count = len(quarters)
 	}
-	recent := quarters[:count]
+	recent := make([]string, count)
+	for i := 0; i < count; i++ {
+		recent[i] = quarters[count-1-i]
+	}
 	return accumulateQuarters(data, recent)
 }
 
@@ -91,7 +95,7 @@ func buildFromAnnual(data *FinancialData, year string) *TTMMetrics {
 		equity = totalAssets - totalLiabilities
 	}
 
-	metrics := &TTMMetrics{HasData: true, PeriodCount: 1}
+	metrics := &TTMMetrics{HasData: true, PeriodCount: 1, Periods: []string{year}}
 	metrics.Revenue = revenue
 	metrics.NetProfit = netProfit
 	metrics.OperatingCash = operatingCash
@@ -109,7 +113,7 @@ func buildFromAnnual(data *FinancialData, year string) *TTMMetrics {
 
 // accumulateQuarters 累加多个季度的数据
 func accumulateQuarters(data *FinancialData, periods []string) *TTMMetrics {
-	metrics := &TTMMetrics{HasData: true, PeriodCount: len(periods)}
+	metrics := &TTMMetrics{HasData: true, PeriodCount: len(periods), Periods: append([]string(nil), periods...)}
 	latestPeriod := periods[len(periods)-1]
 
 	for _, period := range periods {
@@ -153,6 +157,18 @@ func (m *TTMMetrics) FormatTTMReport() string {
 		return "> **TTM 数据不足**: 需要至少 1 个季度/年度财务数据\n\n"
 	}
 	var b strings.Builder
+
+	// 累加期间清单（便于核对：模块3.4 数据时效以最新一期为准）
+	if len(m.Periods) > 0 {
+		b.WriteString("> **累加期间**: ")
+		b.WriteString(strings.Join(m.Periods, " + "))
+		if m.PeriodCount == 1 {
+			b.WriteString("（季报数据不足，已退化为最新年报口径）")
+		} else if m.PeriodCount < 4 {
+			b.WriteString(fmt.Sprintf("（仅 %d 个期间，TTM 口径不完整）", m.PeriodCount))
+		}
+		b.WriteString("\n\n")
+	}
 
 	// 表1：经营规模（累计值）
 	b.WriteString("### 3.4.1 经营规模（累计值）\n\n")

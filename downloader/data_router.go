@@ -3,6 +3,7 @@ package downloader
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -198,11 +199,15 @@ type SFLFinancialData struct {
 }
 
 // FetchFinancialData 获取财务数据，按优先级路由
-func (r *DataRouter) FetchFinancialData(ctx context.Context, market, code string) (*SFLFinancialData, error) {
+// maxYears 控制 SFL 接口的年限窗口（也是后续 ConvertToFinancialReportData 决定保留几个年报的依据）。
+func (r *DataRouter) FetchFinancialData(ctx context.Context, market, code string, maxYears int) (*SFLFinancialData, error) {
+	if maxYears <= 0 {
+		maxYears = 5
+	}
 	// 1. StockFinLens 数据源（如果启用）
 	if r.sflEnabled && r.useForFinancial && r.sflClient != nil {
 		fmt.Printf("[DataRouter] Financial from StockFinLens for %s.%s\n", market, code)
-		start := time.Now().AddDate(-5, 0, 0).Format("20060102")
+		start := time.Now().AddDate(-maxYears, 0, 0).Format("20060102")
 		end := time.Now().Format("20060102")
 
 		var data SFLFinancialData
@@ -250,7 +255,8 @@ func isAnnualReport(endDate string) bool {
 	return strings.HasSuffix(year, "-12-31") || len(year) == 4
 }
 
-// ConvertToFinancialReportData 将 SFL 财务数据转换为标准 FinancialReportData
+// ConvertToFinancialReportData 将 SFL 财务数据转换为标准 FinancialReportData。
+// 保留口径：全部年报（供历史趋势分析）+ 最近 3 个非年报季报（供 TTM 模块 3 季+1 年报累加成 12 个月口径）。
 func (r *DataRouter) ConvertToFinancialReportData(tfd *SFLFinancialData, symbol string) *FinancialReportData {
 	result := &FinancialReportData{
 		Symbol:          symbol,
@@ -260,15 +266,52 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *SFLFinancialData, symbol 
 		CashFlow:        make(map[string]map[string]float64),
 	}
 
-	yearSet := make(map[string]struct{})
-
-	// 收入表（只保留年报）
+	// 先扫描全部 EndDate（三表 union），挑出最近 3 个非年报季报作为保留集合
+	quarterSet := make(map[string]struct{})
+	collectQuarter := func(endDate string) {
+		if endDate == "" || isAnnualReport(endDate) {
+			return
+		}
+		quarterSet[endDate] = struct{}{}
+	}
 	for _, item := range tfd.Income {
-		if !isAnnualReport(item.EndDate) {
+		collectQuarter(item.EndDate)
+	}
+	for _, item := range tfd.BalanceSheet {
+		collectQuarter(item.EndDate)
+	}
+	for _, item := range tfd.Cashflow {
+		collectQuarter(item.EndDate)
+	}
+	quarterDates := make([]string, 0, len(quarterSet))
+	for q := range quarterSet {
+		quarterDates = append(quarterDates, q)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(quarterDates))) // 降序
+	keepQuarters := make(map[string]struct{})
+	for i := 0; i < len(quarterDates) && i < 3; i++ {
+		keepQuarters[quarterDates[i]] = struct{}{}
+	}
+	// shouldKeep: 年报全留；非年报只留 keepQuarters 内的 3 个最近季度
+	shouldKeep := func(endDate string) bool {
+		if isAnnualReport(endDate) {
+			return true
+		}
+		_, ok := keepQuarters[endDate]
+		return ok
+	}
+
+	yearSet := make(map[string]struct{}) // 仅累计年报，保持 result.Years 仅年报的既有语义
+
+	// 收入表（年报 + 最近 3 季）
+	for _, item := range tfd.Income {
+		if !shouldKeep(item.EndDate) {
 			continue
 		}
 		year := toYearKey(item.EndDate)
-		yearSet[year] = struct{}{}
+		if isAnnualReport(item.EndDate) {
+			yearSet[year] = struct{}{}
+		}
 		setVal(result.IncomeStatement, "营业收入", year, item.Revenue)
 		setVal(result.IncomeStatement, "营业总成本", year, item.TotalCogs)
 		setVal(result.IncomeStatement, "营业成本", year, item.OperateCost)
@@ -283,13 +326,15 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *SFLFinancialData, symbol 
 		setVal(result.IncomeStatement, "基本每股收益", year, item.EPS)
 	}
 
-	// 资产负债表（只保留年报）
+	// 资产负债表（年报 + 最近 3 季）
 	for _, item := range tfd.BalanceSheet {
-		if !isAnnualReport(item.EndDate) {
+		if !shouldKeep(item.EndDate) {
 			continue
 		}
 		year := toYearKey(item.EndDate)
-		yearSet[year] = struct{}{}
+		if isAnnualReport(item.EndDate) {
+			yearSet[year] = struct{}{}
+		}
 		setVal(result.BalanceSheet, "资产合计", year, item.TotalAssets)
 		setVal(result.BalanceSheet, "负债合计", year, item.TotalLiab)
 		setVal(result.BalanceSheet, "所有者权益合计", year, item.TotalHldrEqy)
@@ -336,13 +381,15 @@ func (r *DataRouter) ConvertToFinancialReportData(tfd *SFLFinancialData, symbol 
 		setVal(result.BalanceSheet, "归属于母公司所有者权益合计", year, item.TotalHldrEqy-item.MinorityInt)
 	}
 
-	// 现金流量表（只保留年报）
+	// 现金流量表（年报 + 最近 3 季）
 	for _, item := range tfd.Cashflow {
-		if !isAnnualReport(item.EndDate) {
+		if !shouldKeep(item.EndDate) {
 			continue
 		}
 		year := toYearKey(item.EndDate)
-		yearSet[year] = struct{}{}
+		if isAnnualReport(item.EndDate) {
+			yearSet[year] = struct{}{}
+		}
 		setVal(result.CashFlow, "经营活动产生的现金流量净额", year, item.NCashflowAct)
 		setVal(result.CashFlow, "投资活动产生的现金流量净额", year, item.NCashflowInv)
 		setVal(result.CashFlow, "筹资活动产生的现金流量净额", year, item.NCashflowFin)

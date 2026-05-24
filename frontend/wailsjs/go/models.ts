@@ -105,6 +105,7 @@ export namespace analyzer {
 	    netMargin: number;
 	    cashRatio: number;
 	    periodCount: number;
+	    periods: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new TTMMetrics(source);
@@ -120,6 +121,7 @@ export namespace analyzer {
 	        this.netMargin = source["netMargin"];
 	        this.cashRatio = source["cashRatio"];
 	        this.periodCount = source["periodCount"];
+	        this.periods = source["periods"];
 	    }
 	}
 	export class QuarterlyAlertItem {
@@ -1061,6 +1063,7 @@ export namespace main {
 	    success: boolean;
 	    message: string;
 	    years: string[];
+	    quarters: string[];
 	    validation: downloader.ValidationResult[];
 	    sourceName: string;
 	    qualityScore: number;
@@ -1075,6 +1078,7 @@ export namespace main {
 	        this.success = source["success"];
 	        this.message = source["message"];
 	        this.years = source["years"];
+	        this.quarters = source["quarters"];
 	        this.validation = this.convertValues(source["validation"], downloader.ValidationResult);
 	        this.sourceName = source["sourceName"];
 	        this.qualityScore = source["qualityScore"];
