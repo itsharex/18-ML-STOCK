@@ -15,13 +15,22 @@ interface Props {
   onClose?: () => void
 }
 
+// 均线配置
+interface MAConfig {
+  count: number
+  periods: number[]
+}
+
+const defaultMAConfig: MAConfig = {
+  count: 4,
+  periods: [5, 10, 30, 60],
+}
+
+const maColors = ['#fbbf24', '#60a5fa', '#a78bfa', '#f87171', '#34d399', '#fb923c']
+
 const colors = {
   up: '#ef4444',
   down: '#22c55e',
-  ma5: '#fbbf24',
-  ma10: '#60a5fa',
-  ma30: '#a78bfa',
-  ma60: '#f87171',
   macd: '#f59e0b',
   signal: '#3b82f6',
   histPositive: '#ef4444',
@@ -55,12 +64,19 @@ function calcMA(arr: number[], period: number): (number | null)[] {
   return ma
 }
 
-function calculateIndicators(data: KlineData[]) {
+function calculateIndicators(data: KlineData[], maConfig: MAConfig) {
   const closes = data.map(d => d.close)
-  const ma5 = calcMA(closes, 5)
-  const ma10 = calcMA(closes, 10)
-  const ma30 = calcMA(closes, 30)
-  const ma60 = calcMA(closes, 60)
+
+  // 动态计算均线
+  const mas: { name: string; data: (number | null)[]; color: string }[] = []
+  for (let i = 0; i < maConfig.count; i++) {
+    const period = maConfig.periods[i] || 5
+    mas.push({
+      name: `MA${period}`,
+      data: calcMA(closes, period),
+      color: maColors[i % maColors.length],
+    })
+  }
 
   const ema12 = calcEMA(closes, 12)
   const ema26 = calcEMA(closes, 26)
@@ -85,19 +101,16 @@ function calculateIndicators(data: KlineData[]) {
       const gain = diff > 0 ? diff : 0
       const loss = diff < 0 ? -diff : 0
       if (i < period) {
-        // 积累初始 period 个变化值
         avgGain += gain
         avgLoss += loss
         result.push(null)
       } else if (i === period) {
-        // 第一个 RSI：简单平均
         avgGain += gain
         avgLoss += loss
         avgGain /= period
         avgLoss /= period
         result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss))
       } else {
-        // 后续 RSI：Wilder's smoothing
         avgGain = (avgGain * (period - 1) + gain) / period
         avgLoss = (avgLoss * (period - 1) + loss) / period
         result.push(avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss))
@@ -120,7 +133,7 @@ function calculateIndicators(data: KlineData[]) {
     bbLower.push(mean - 2 * std)
   }
 
-  return { dif, dea, hist, rsi6, rsi12, rsi24, bbUpper, bbMid, bbLower, ma5, ma10, ma30, ma60 }
+  return { dif, dea, hist, rsi6, rsi12, rsi24, bbUpper, bbMid, bbLower, mas }
 }
 
 function fmt2(v: any): string {
@@ -142,6 +155,26 @@ function fmt1(v: any): string {
   return n.toFixed(1)
 }
 
+function loadMAConfig(): MAConfig {
+  try {
+    const saved = localStorage.getItem('unifiedChart_maConfig')
+    if (saved) {
+      const parsed = JSON.parse(saved)
+      if (typeof parsed.count === 'number' && Array.isArray(parsed.periods)) {
+        return {
+          count: Math.min(6, Math.max(1, parsed.count)),
+          periods: parsed.periods.map((p: number) => Math.min(250, Math.max(1, p))),
+        }
+      }
+    }
+  } catch {}
+  return { ...defaultMAConfig }
+}
+
+function saveMAConfig(config: MAConfig) {
+  localStorage.setItem('unifiedChart_maConfig', JSON.stringify(config))
+}
+
 export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose }: Props) {
   const chartRef = useRef<HTMLDivElement>(null)
   const chartInstanceRef = useRef<echarts.ECharts | null>(null)
@@ -150,21 +183,24 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [isExpanded, setIsExpanded] = useState(!!initialExpanded)
+  const [period, setPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [maConfig, setMAConfig] = useState<MAConfig>(loadMAConfig)
+  const [showSettings, setShowSettings] = useState(false)
 
   // 如果 propQuote 变化，同步更新 localQuote
   useEffect(() => {
     setLocalQuote(propQuote)
   }, [propQuote])
 
-  // K 线数据加载
+  // K 线数据加载（按周期）
   useEffect(() => {
     if (!code) return
     setLoading(true)
-    GetStockKlines(code)
+    GetStockKlines(code, period)
       .then((list) => setRawData(list || []))
       .catch(() => setRawData([]))
       .finally(() => setLoading(false))
-  }, [code])
+  }, [code, period])
 
   // 自己获取行情（如果 propQuote 为 null/undefined）
   useEffect(() => {
@@ -216,7 +252,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     const total = data.length
     const zoomStart = total > visibleSize ? ((total - visibleSize) / total) * 100 : 0
 
-    const { dif, dea, hist, rsi6, rsi12, rsi24, bbUpper, bbMid, bbLower, ma5, ma10, ma30, ma60 } = calculateIndicators(data)
+    const { dif, dea, hist, rsi6, rsi12, rsi24, bbUpper, bbMid, bbLower, mas } = calculateIndicators(data, maConfig)
 
     // xAxis 与所有 series 全部使用全量数据;dataZoom 只裁剪可见窗口,不裁剪计算窗口。
     const dates = data.map(d => d.time)
@@ -228,13 +264,15 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
 
     const xAxisLabelInterval = isExpanded ? Math.max(1, Math.floor(visibleSize / 6)) : Math.max(1, Math.floor(visibleSize / 6))
 
+    const legendData = ['K线', ...mas.map(m => m.name)]
+
     const option: echarts.EChartsOption = {
       backgroundColor: 'transparent',
       animation: false,
       legend: {
-        data: ['K线', 'MA5', 'MA10', 'MA30', 'MA60'],
+        data: legendData,
         top: 8,
-        right: 10,
+        right: 90, // 为周期选择器+设置按钮留出空间
         textStyle: { color: '#94a3b8', fontSize: 11 },
         itemStyle: { borderWidth: 0 },
         itemGap: 8,
@@ -277,7 +315,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
               leftItems.push(`<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:#94a3b8">最高</span><span>${fmt2(h)}</span></div>`)
             }
           }
-          params.filter((p: any) => ['MA5', 'MA10', 'MA30', 'MA60'].includes(p.seriesName)).forEach((p: any) => {
+          params.filter((p: any) => p.seriesName.startsWith('MA')).forEach((p: any) => {
             const color = p.color || '#94a3b8'
             leftItems.push(`<div style="display:flex;justify-content:space-between;gap:18px"><span style="color:${color}">● ${p.seriesName}</span><span>${fmt2(p.value)}</span></div>`)
           })
@@ -391,10 +429,17 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
           yAxisIndex: 1,
           cursor: 'default',
         },
-        { name: 'MA5', type: 'line', data: ma5, smooth: false, lineStyle: { color: colors.ma5, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA10', type: 'line', data: ma10, smooth: false, lineStyle: { color: colors.ma10, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA30', type: 'line', data: ma30, smooth: false, lineStyle: { color: colors.ma30, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
-        { name: 'MA60', type: 'line', data: ma60, smooth: false, lineStyle: { color: colors.ma60, width: 1.5 }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0, cursor: 'default' },
+        ...mas.map(m => ({
+          name: m.name,
+          type: 'line' as const,
+          data: m.data,
+          smooth: false,
+          lineStyle: { color: m.color, width: 1.5 },
+          symbol: 'none',
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          cursor: 'default' as const,
+        })),
         { name: 'DIF', type: 'line', data: dif, smooth: true, lineStyle: { color: colors.macd }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
         { name: 'DEA', type: 'line', data: dea, smooth: true, lineStyle: { color: colors.signal }, symbol: 'none', xAxisIndex: 2, yAxisIndex: 2, cursor: 'default' },
         {
@@ -423,7 +468,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
       chart.dispose()
       chartInstanceRef.current = null
     }
-  }, [data, isExpanded])
+  }, [data, isExpanded, maConfig])
 
   const [isLightTheme, setIsLightTheme] = useState(false)
   useEffect(() => {
@@ -456,13 +501,34 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
     if (!code || refreshing) return
     setRefreshing(true)
     try {
-      const list = await RefreshStockKlines(code)
+      const list = await RefreshStockKlines(code, period)
       setRawData(list || [])
     } catch (e) {
       console.error('刷新K线失败:', e)
     } finally {
       setRefreshing(false)
     }
+  }
+
+  // MA 配置更新
+  const handleMACountChange = (count: number) => {
+    const newConfig = {
+      count,
+      periods: maConfig.periods.slice(0, count).concat(
+        Array(Math.max(0, count - maConfig.periods.length)).fill(5)
+          .map((_, i) => defaultMAConfig.periods[i] || 5)
+      ),
+    }
+    setMAConfig(newConfig)
+    saveMAConfig(newConfig)
+  }
+
+  const handleMAPeriodChange = (index: number, value: number) => {
+    const newPeriods = [...maConfig.periods]
+    newPeriods[index] = value
+    const newConfig = { ...maConfig, periods: newPeriods }
+    setMAConfig(newConfig)
+    saveMAConfig(newConfig)
   }
 
   // 外层包装:isExpanded=true 时完全脱离正常布局(0×0 fixed),避免在 App.tsx 顶层挂载时
@@ -515,6 +581,7 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
         zIndex: isExpanded ? 9999 : 1,
         backgroundColor: isExpanded ? fullscreenBg : 'transparent',
       }}>
+        {/* 左上角：提示文字 + 刷新按钮 */}
         <div style={{
           position: 'absolute', top: 12, left: 12, zIndex: 10000,
           display: 'flex', alignItems: 'center', gap: 12,
@@ -542,6 +609,167 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
             </button>
           )}
         </div>
+
+        {/* 右上角：周期选择器 + 设置按钮 */}
+        <div style={{
+          position: 'absolute', top: 6, right: 8, zIndex: 10001,
+          display: 'flex', alignItems: 'center', gap: 6,
+        }}>
+          {/* 周期选择器 */}
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as 'daily' | 'weekly' | 'monthly')}
+            style={{
+              padding: '3px 6px',
+              borderRadius: 4,
+              border: '1px solid rgba(148,163,184,0.3)',
+              background: btnBg,
+              color: btnText,
+              fontSize: 12,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="daily">日线</option>
+            <option value="weekly">周线</option>
+            <option value="monthly">月线</option>
+          </select>
+          {/* 设置按钮 */}
+          <button
+            onClick={() => setShowSettings(true)}
+            title="均线设置"
+            style={{
+              padding: '3px 8px', borderRadius: 4,
+              border: '1px solid rgba(148,163,184,0.3)',
+              background: btnBg, color: btnText,
+              fontSize: 12, cursor: 'pointer',
+            }}
+          >
+            ⚙
+          </button>
+        </div>
+
+        {/* 设置弹窗 */}
+        {showSettings && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 10002,
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+          }} onClick={() => setShowSettings(false)}>
+            <div
+              style={{
+                width: 320,
+                padding: 20,
+                borderRadius: 8,
+                background: isLightTheme ? '#fff' : '#1e293b',
+                border: `1px solid ${isLightTheme ? '#e2e8f0' : '#334155'}`,
+                color: isLightTheme ? '#1f2937' : '#e2e8f0',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>均线设置</div>
+
+              {/* 均线数量 */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, marginBottom: 8, color: isLightTheme ? '#64748b' : '#94a3b8' }}>
+                  均线数量（1~6）
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => handleMACountChange(n)}
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 4,
+                        border: '1px solid',
+                        borderColor: maConfig.count === n
+                          ? '#3b82f6'
+                          : isLightTheme ? '#e2e8f0' : '#475569',
+                        background: maConfig.count === n ? '#3b82f6' : 'transparent',
+                        color: maConfig.count === n ? '#fff' : 'inherit',
+                        fontSize: 12,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {n}条
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 每条均线周期 */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, marginBottom: 8, color: isLightTheme ? '#64748b' : '#94a3b8' }}>
+                  均线周期（1~250）
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {Array.from({ length: maConfig.count }).map((_, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: '50%',
+                        background: maColors[i % maColors.length],
+                        flexShrink: 0,
+                      }} />
+                      <span style={{ fontSize: 12, width: 40 }}>MA{i + 1}</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={250}
+                        value={maConfig.periods[i] || 5}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10)
+                          if (!isNaN(v)) {
+                            handleMAPeriodChange(i, Math.min(250, Math.max(1, v)))
+                          }
+                        }}
+                        style={{
+                          width: 70,
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          border: `1px solid ${isLightTheme ? '#e2e8f0' : '#475569'}`,
+                          background: isLightTheme ? '#f8fafc' : '#0f172a',
+                          color: 'inherit',
+                          fontSize: 12,
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setMAConfig({ ...defaultMAConfig })
+                    saveMAConfig({ ...defaultMAConfig })
+                  }}
+                  style={{
+                    padding: '5px 12px', borderRadius: 4,
+                    border: '1px solid rgba(148,163,184,0.3)',
+                    background: 'transparent', color: 'inherit',
+                    fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  恢复默认
+                </button>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  style={{
+                    padding: '5px 12px', borderRadius: 4,
+                    border: '1px solid #3b82f6',
+                    background: '#3b82f6', color: '#fff',
+                    fontSize: 12, cursor: 'pointer',
+                  }}
+                >
+                  确定
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={chartRef} className="unified-chart-container" style={{ width: '100%', height: '100%' }} />
       </div>
     </div>

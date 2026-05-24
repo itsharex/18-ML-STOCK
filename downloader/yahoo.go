@@ -24,12 +24,31 @@ func toYahooSymbol(market, code string) string {
 }
 
 // fetchKlinesFromYahoo 从 Yahoo Finance 获取历史 K线
-func fetchKlinesFromYahoo(ctx context.Context, market, code string, days int) ([]KlineData, error) {
+func fetchKlinesFromYahoo(ctx context.Context, market, code string, days int, period string) ([]KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
 	symbol := toYahooSymbol(market, code)
 	end := time.Now().Unix()
-	start := time.Now().AddDate(0, 0, -days).Unix()
+	// 周线/月线需要扩大时间窗口以获取足够条数
+	multiplier := 1
+	switch period {
+	case "weekly":
+		multiplier = 7
+	case "monthly":
+		multiplier = 30
+	}
+	start := time.Now().AddDate(0, 0, -days*multiplier).Unix()
 
-	url := fmt.Sprintf("%s/%s?period1=%d&period2=%d&interval=1d&events=history", yahooBaseURL, symbol, start, end)
+	interval := "1d"
+	switch period {
+	case "weekly":
+		interval = "1wk"
+	case "monthly":
+		interval = "1mo"
+	}
+
+	url := fmt.Sprintf("%s/%s?period1=%d&period2=%d&interval=%s&events=history", yahooBaseURL, symbol, start, end, interval)
 	fmt.Printf("[Yahoo] fetching klines: %s\n", url)
 
 	rctx, cancel := context.WithTimeout(ctx, 15*time.Second)

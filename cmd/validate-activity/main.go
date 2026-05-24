@@ -85,7 +85,7 @@ func main() {
 		}
 
 		// 获取K线
-		klines, err := downloader.FetchStockKlines(context.Background(), market, s.Code, 60)
+		klines, err := downloader.FetchStockKlines(context.Background(), market, s.Code, 60, "daily")
 		if err != nil || len(klines) < 20 {
 			fmt.Printf("[%s] K线不足: %v\n", s.Code, err)
 			continue

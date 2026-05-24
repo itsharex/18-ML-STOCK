@@ -45,9 +45,13 @@ func (r *DataRouter) GetSFLClient() *SFLClient {
 // limit 语义说明:
 //   - SFL 启用时:忽略 limit,返回**上市以来全部历史**(内部分批,处理 tushare 单次上限)
 //   - SFL 未启用时:limit 表示兜底链路向远端请求的条数(实际返回可能略少)
-func (r *DataRouter) FetchKlines(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
-	// 1. StockFinLens 数据源:拉上市以来全部
-	if r.sflEnabled && r.useForKline && r.sflClient != nil {
+func (r *DataRouter) FetchKlines(ctx context.Context, market, code string, limit int, period string) ([]KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
+
+	// 1. StockFinLens 数据源:仅支持日线，拉上市以来全部
+	if period == "daily" && r.sflEnabled && r.useForKline && r.sflClient != nil {
 		klines, err := r.fetchAllSFLKlines(ctx, market, code)
 		if err == nil && len(klines) > 0 {
 			fmt.Printf("[DataRouter] Klines from StockFinLens (full history): %d bars for %s.%s\n", len(klines), market, code)
@@ -60,25 +64,27 @@ func (r *DataRouter) FetchKlines(ctx context.Context, market, code string, limit
 
 	// 2. 腾讯财经
 	fmt.Printf("[DataRouter] Klines fallback to Tencent for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromTencent(ctx, market, code, limit); err == nil && len(klines) > 0 {
+	if klines, err := fetchKlinesFromTencent(ctx, market, code, limit, period); err == nil && len(klines) > 0 {
 		return klines, nil
 	}
 
-	// 3. 网易财经
-	fmt.Printf("[DataRouter] Klines fallback to NetEase for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromNetEase(ctx, market, code, limit); err == nil && len(klines) > 0 {
-		return klines, nil
+	// 3. 网易财经（仅支持日线）
+	if period == "daily" {
+		fmt.Printf("[DataRouter] Klines fallback to NetEase for %s.%s\n", market, code)
+		if klines, err := fetchKlinesFromNetEase(ctx, market, code, limit); err == nil && len(klines) > 0 {
+			return klines, nil
+		}
 	}
 
 	// 4. Yahoo Finance
 	fmt.Printf("[DataRouter] Klines fallback to Yahoo for %s.%s\n", market, code)
-	if klines, err := fetchKlinesFromYahoo(ctx, market, code, limit); err == nil && len(klines) > 0 {
+	if klines, err := fetchKlinesFromYahoo(ctx, market, code, limit, period); err == nil && len(klines) > 0 {
 		return klines, nil
 	}
 
 	// 5. 东方财富（最后兜底）
 	fmt.Printf("[DataRouter] Klines fallback to EastMoney for %s.%s\n", market, code)
-	return FetchStockKlines(ctx, market, code, limit)
+	return FetchStockKlines(ctx, market, code, limit, period)
 }
 
 // fetchAllSFLKlines 分批拉取 SFL 全部历史 K 线。

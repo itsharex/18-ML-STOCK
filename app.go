@@ -858,10 +858,10 @@ func (a *App) GetWatchlistActivity() ([]WatchlistActivitySummary, error) {
 			var quote *downloader.StockQuote
 			var kErr, qErr error
 			if a.dataRouter != nil {
-				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60)
+				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60, "daily")
 				quote, qErr = a.dataRouter.FetchQuote(a.ctx, market, pureCode)
 			} else {
-				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60)
+				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60, "daily")
 				quote, qErr = downloader.FetchStockQuote(a.ctx, market, pureCode)
 			}
 			if kErr != nil || len(klines) < 20 {
@@ -975,10 +975,10 @@ func (a *App) FetchMissingActivity(codes []string) (*FetchMissingActivityResult,
 			var quote *downloader.StockQuote
 			var kErr, qErr error
 			if a.dataRouter != nil {
-				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60)
+				klines, kErr = a.dataRouter.FetchKlines(a.ctx, market, pureCode, 60, "daily")
 				quote, qErr = a.dataRouter.FetchQuote(a.ctx, market, pureCode)
 			} else {
-				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60)
+				klines, kErr = downloader.FetchStockKlines(a.ctx, market, pureCode, 60, "daily")
 				quote, qErr = downloader.FetchStockQuote(a.ctx, market, pureCode)
 			}
 			if kErr != nil || len(klines) < 20 {
@@ -1688,14 +1688,18 @@ func (a *App) GetModule4Status(symbol string) (bool, error) {
 	return compAnalysis != nil && compAnalysis.HasData && len(compAnalysis.Metrics) > 0, nil
 }
 
-// GetStockKlines 获取股票历史K线数据（日K），优先读取本地缓存
-func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
+// GetStockKlines 获取股票历史K线数据，优先读取本地缓存。
+// period 支持 "daily"(默认)、"weekly"、"monthly"。
+func (a *App) GetStockKlines(symbol string, period string) ([]downloader.KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
 	if a.storage == nil {
 		return nil, fmt.Errorf("存储未初始化")
 	}
 	// 缓存命中阈值放宽到 100(基本是"非空检查"):港股新股(上市不到 8 年)总条数可能 < 2000,
 	// 旧的 375 条 A 股缓存也允许复用。分析时会写入更全的数据，自然刷新。
-	if cached, err := a.storage.LoadStockKlines(symbol); err == nil && len(cached) >= 100 {
+	if cached, err := a.storage.LoadStockKlines(symbol, period); err == nil && len(cached) >= 100 {
 		// 检查缓存的K线是否有换手率，如果没有，尝试用 quote 补算
 		hasTurnover := false
 		for _, k := range cached {
@@ -1715,12 +1719,12 @@ func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
 				debugLog("[GetStockKlines] %s cache hit but no turnover and no quote available", symbol)
 			}
 		}
-		debugLog("[GetStockKlines] %s cache hit, len=%d, first turnoverRate=%.2f", symbol, len(cached), cached[0].TurnoverRate)
+		debugLog("[GetStockKlines] %s period=%s cache hit, len=%d, first turnoverRate=%.2f", symbol, period, len(cached), cached[0].TurnoverRate)
 		return cached, nil
 	} else if err != nil {
-		debugLog("[GetStockKlines] %s cache read error: %v", symbol, err)
+		debugLog("[GetStockKlines] %s period=%s cache read error: %v", symbol, period, err)
 	} else {
-		debugLog("[GetStockKlines] %s cache miss or empty", symbol)
+		debugLog("[GetStockKlines] %s period=%s cache miss or empty", symbol, period)
 	}
 	parts := strings.Split(symbol, ".")
 	if len(parts) != 2 {
@@ -1732,34 +1736,38 @@ func (a *App) GetStockKlines(symbol string) ([]downloader.KlineData, error) {
 	var err error
 	// SFL 启用时 DataRouter 内部会拉全量历史（忽略 limit）;非 SFL 兜底链路按 2500 条拉(约 10 年)
 	if a.dataRouter != nil {
-		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
+		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500, period)
 	} else {
-		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
+		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500, period)
 	}
 
 	// 远程全部失败时回退到 cache(哪怕过时 / 条数少也比看不到强;
 	// 典型场景:港股 tushare hk_daily 1次/分钟限速 + 其它源不支持港股)
 	if err != nil || len(klist) == 0 {
-		if cached, cErr := a.storage.LoadStockKlines(symbol); cErr == nil && len(cached) > 0 {
-			debugLog("[GetStockKlines] %s remote failed (err=%v, len=%d), falling back to cache (len=%d)", symbol, err, len(klist), len(cached))
+		if cached, cErr := a.storage.LoadStockKlines(symbol, period); cErr == nil && len(cached) > 0 {
+			debugLog("[GetStockKlines] %s period=%s remote failed (err=%v, len=%d), falling back to cache (len=%d)", symbol, period, err, len(klist), len(cached))
 			return cached, nil
 		}
 		if err != nil {
-			debugLog("[GetStockKlines] %s FetchStockKlines error: %v (no cache fallback)", symbol, err)
+			debugLog("[GetStockKlines] %s period=%s FetchStockKlines error: %v (no cache fallback)", symbol, period, err)
 			return nil, err
 		}
 	}
 
 	if len(klist) > 0 {
 		last := klist[len(klist)-1]
-		debugLog("[GetStockKlines] %s fetched %d klines, last={Time:%s Open:%.2f Close:%.2f High:%.2f Low:%.2f}", symbol, len(klist), last.Time, last.Open, last.Close, last.High, last.Low)
+		debugLog("[GetStockKlines] %s period=%s fetched %d klines, last={Time:%s Open:%.2f Close:%.2f High:%.2f Low:%.2f}", symbol, period, len(klist), last.Time, last.Open, last.Close, last.High, last.Low)
 	}
 	return klist, nil
 }
 
-// RefreshStockKlines 强制从远程重新拉取K线（绕过本地缓存）并写回 klines.json。
+// RefreshStockKlines 强制从远程重新拉取K线（绕过本地缓存）并写回缓存文件。
 // 用于用户主动点"刷新"按钮：早期版本写入的旧缓存可能只有几百条，导致前端 dataZoom 无法拖到上市初期。
-func (a *App) RefreshStockKlines(symbol string) ([]downloader.KlineData, error) {
+// period 支持 "daily"(默认)、"weekly"、"monthly"。
+func (a *App) RefreshStockKlines(symbol string, period string) ([]downloader.KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
 	if a.storage == nil {
 		return nil, fmt.Errorf("存储未初始化")
 	}
@@ -1773,12 +1781,12 @@ func (a *App) RefreshStockKlines(symbol string) ([]downloader.KlineData, error) 
 	var klist []downloader.KlineData
 	var err error
 	if a.dataRouter != nil {
-		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
+		klist, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500, period)
 	} else {
-		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
+		klist, err = downloader.FetchStockKlines(a.ctx, market, code, 2500, period)
 	}
 	if err != nil {
-		debugLog("[RefreshStockKlines] %s remote fetch failed: %v", symbol, err)
+		debugLog("[RefreshStockKlines] %s period=%s remote fetch failed: %v", symbol, period, err)
 		return nil, err
 	}
 	if len(klist) == 0 {
@@ -1802,10 +1810,10 @@ func (a *App) RefreshStockKlines(symbol string) ([]downloader.KlineData, error) 
 		}
 	}
 
-	if err := a.storage.SaveStockKlines(symbol, klist); err != nil {
-		debugLog("[RefreshStockKlines] %s save cache error: %v", symbol, err)
+	if err := a.storage.SaveStockKlines(symbol, period, klist); err != nil {
+		debugLog("[RefreshStockKlines] %s period=%s save cache error: %v", symbol, period, err)
 	}
-	debugLog("[RefreshStockKlines] %s refreshed %d klines, first=%s last=%s", symbol, len(klist), klist[0].Time, klist[len(klist)-1].Time)
+	debugLog("[RefreshStockKlines] %s period=%s refreshed %d klines, first=%s last=%s", symbol, period, len(klist), klist[0].Time, klist[len(klist)-1].Time)
 	return klist, nil
 }
 

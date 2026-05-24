@@ -1116,11 +1116,29 @@ type KlineData struct {
 	TurnoverRate float64 `json:"turnoverRate"` // 换手率（%）
 }
 
-// FetchStockKlines 获取股票历史K线数据（日K），先尝试腾讯财经，再网易财经，最后东方财富
-func FetchStockKlines(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
+// periodToEastMoneyKlt 将周期转换为东方财富 klt 参数。
+// daily→101, weekly→102, monthly→103。
+func periodToEastMoneyKlt(period string) string {
+	switch period {
+	case "weekly":
+		return "102"
+	case "monthly":
+		return "103"
+	default:
+		return "101"
+	}
+}
+
+// FetchStockKlines 获取股票历史K线数据，先尝试腾讯财经，再网易财经，最后东方财富。
+// period 支持 "daily"(默认)、"weekly"、"monthly"。
+func FetchStockKlines(ctx context.Context, market, code string, limit int, period string) ([]KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
+
 	// 1. 腾讯财经 HTTPS（当前网络环境下最稳定）
-	fmt.Printf("[FetchStockKlines] trying Tencent for %s.%s, limit=%d\n", market, code, limit)
-	klines, err := fetchKlinesFromTencent(ctx, market, code, limit)
+	fmt.Printf("[FetchStockKlines] trying Tencent for %s.%s, limit=%d, period=%s\n", market, code, limit, period)
+	klines, err := fetchKlinesFromTencent(ctx, market, code, limit, period)
 	if err == nil && len(klines) > 0 {
 		fmt.Printf("[FetchStockKlines] Tencent returned %d klines for %s.%s\n", len(klines), market, code)
 		return klines, nil
@@ -1129,15 +1147,17 @@ func FetchStockKlines(ctx context.Context, market, code string, limit int) ([]Kl
 		fmt.Printf("[FetchStockKlines] Tencent failed for %s.%s: %v\n", market, code, err)
 	}
 
-	// 2. 网易财经 CSV
-	fmt.Printf("[FetchStockKlines] trying NetEase for %s.%s\n", market, code)
-	klines, err = fetchKlinesFromNetEase(ctx, market, code, limit)
-	if err == nil && len(klines) > 0 {
-		fmt.Printf("[FetchStockKlines] NetEase returned %d klines for %s.%s\n", len(klines), market, code)
-		return klines, nil
-	}
-	if err != nil {
-		fmt.Printf("[FetchStockKlines] NetEase failed for %s.%s: %v\n", market, code, err)
+	// 2. 网易财经 CSV（仅支持日线）
+	if period == "daily" || period == "" {
+		fmt.Printf("[FetchStockKlines] trying NetEase for %s.%s\n", market, code)
+		klines, err = fetchKlinesFromNetEase(ctx, market, code, limit)
+		if err == nil && len(klines) > 0 {
+			fmt.Printf("[FetchStockKlines] NetEase returned %d klines for %s.%s\n", len(klines), market, code)
+			return klines, nil
+		}
+		if err != nil {
+			fmt.Printf("[FetchStockKlines] NetEase failed for %s.%s: %v\n", market, code, err)
+		}
 	}
 
 	// 3. 东方财富 HTTPS（当前网络环境下可能被屏蔽）
@@ -1152,7 +1172,8 @@ func FetchStockKlines(ctx context.Context, market, code string, limit int) ([]Kl
 	default:
 		secid = "0." + code
 	}
-	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?ut=fa5fd1943c7b386f172d6893dbfba10b&secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116&klt=101&fqt=1&beg=0&end=20500101&rtntype=6&lmt=%d", secid, limit)
+	klt := periodToEastMoneyKlt(period)
+	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/kline/get?ut=fa5fd1943c7b386f172d6893dbfba10b&secid=%s&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116&klt=%s&fqt=1&beg=0&end=20500101&rtntype=6&lmt=%d", secid, klt, limit)
 	fmt.Printf("[FetchStockKlines] trying EastMoney: %s\n", url)
 	body, err := httpGetWithReferer(ctx, url, "https://quote.eastmoney.com/")
 	if err == nil {
@@ -1262,15 +1283,27 @@ func detectEastMoneyOffset(firstLine string) int {
 	return 0
 }
 
-func fetchKlinesFromTencent(ctx context.Context, market, code string, limit int) ([]KlineData, error) {
+func fetchKlinesFromTencent(ctx context.Context, market, code string, limit int, period string) ([]KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
+	// 腾讯周期标识：day/week/month
+	tencPeriod := "day"
+	switch period {
+	case "weekly":
+		tencPeriod = "week"
+	case "monthly":
+		tencPeriod = "month"
+	}
+
 	prefix := strings.ToLower(market)
 	isHK := strings.ToUpper(market) == "HK"
 	var url string
 	if isHK {
 		// 港股腾讯接口末尾不能加 qfq
-		url = fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,day,,,%d,", prefix, code, limit)
+		url = fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,%s,,,%d,", prefix, code, tencPeriod, limit)
 	} else {
-		url = fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,day,,,%d,qfq", prefix, code, limit)
+		url = fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,%s,,,%d,qfq", prefix, code, tencPeriod, limit)
 	}
 	rctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1298,11 +1331,22 @@ func fetchKlinesFromTencent(ctx context.Context, market, code string, limit int)
 		return nil, fmt.Errorf("Tencent kline unsupported data schema (likely HK or empty)")
 	}
 
+	// 根据 period 选择对应的 JSON 字段名
+	var qfqKey, rawKey string
+	switch period {
+	case "weekly":
+		qfqKey = "qfqweek"
+		rawKey = "week"
+	case "monthly":
+		qfqKey = "qfqmonth"
+		rawKey = "month"
+	default:
+		qfqKey = "qfqday"
+		rawKey = "day"
+	}
+
 	var result struct {
-		Data map[string]struct {
-			QfqDay [][]any `json:"qfqday"`
-			Day    [][]any `json:"day"`
-		}
+		Data map[string]map[string]json.RawMessage
 	}
 	if err := json.Unmarshal([]byte(`{"Data":`+string(envelope.Data)+`}`), &result); err != nil {
 		return nil, err
@@ -1314,14 +1358,23 @@ func fetchKlinesFromTencent(ctx context.Context, market, code string, limit int)
 		return nil, fmt.Errorf("腾讯K线数据为空")
 	}
 
-	var days [][]any
+	// 尝试 qfq 字段，fallback 到原始字段
+	var barsRaw json.RawMessage
 	if isHK {
-		days = stockData.Day
+		barsRaw = stockData[rawKey]
 	} else {
-		days = stockData.QfqDay
-		if len(days) == 0 {
-			days = stockData.Day
+		barsRaw = stockData[qfqKey]
+		if len(barsRaw) == 0 || string(barsRaw) == "null" {
+			barsRaw = stockData[rawKey]
 		}
+	}
+	if len(barsRaw) == 0 || string(barsRaw) == "null" {
+		return nil, fmt.Errorf("腾讯K线数据为空")
+	}
+
+	var days [][]any
+	if err := json.Unmarshal(barsRaw, &days); err != nil {
+		return nil, fmt.Errorf("腾讯K线数据解析失败: %w", err)
 	}
 	if len(days) == 0 {
 		return nil, fmt.Errorf("腾讯K线数据为空")

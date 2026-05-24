@@ -166,8 +166,8 @@ export function GetStockDataHistory(arg1) {
   return window['go']['main']['App']['GetStockDataHistory'](arg1);
 }
 
-export function GetStockKlines(arg1) {
-  return window['go']['main']['App']['GetStockKlines'](arg1);
+export function GetStockKlines(arg1, arg2) {
+  return window['go']['main']['App']['GetStockKlines'](arg1, arg2);
 }
 
 export function GetStockMoneyflow(arg1, arg2) {
@@ -238,8 +238,8 @@ export function RefreshMarketCache() {
   return window['go']['main']['App']['RefreshMarketCache']();
 }
 
-export function RefreshStockKlines(arg1) {
-  return window['go']['main']['App']['RefreshStockKlines'](arg1);
+export function RefreshStockKlines(arg1, arg2) {
+  return window['go']['main']['App']['RefreshStockKlines'](arg1, arg2);
 }
 
 export function RefreshStockProfile(arg1) {

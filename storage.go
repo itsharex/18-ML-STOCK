@@ -474,13 +474,20 @@ func (s *Storage) LoadStockQuote(symbol string) (*downloader.StockQuote, error) 
 	return &quote, nil
 }
 
-// SaveStockKlines 保存股票K线数据缓存
-func (s *Storage) SaveStockKlines(symbol string, klines []downloader.KlineData) error {
+// SaveStockKlines 保存股票K线数据缓存。period 为空时默认用 "daily"。
+func (s *Storage) SaveStockKlines(symbol string, period string, klines []downloader.KlineData) error {
 	dir := filepath.Join(s.dataDir, "data", symbol)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "klines.json")
+	if period == "" {
+		period = "daily"
+	}
+	filename := "klines.json"
+	if period != "daily" {
+		filename = fmt.Sprintf("klines_%s.json", period)
+	}
+	path := filepath.Join(dir, filename)
 	data, err := json.MarshalIndent(klines, "", "  ")
 	if err != nil {
 		return err
@@ -488,9 +495,16 @@ func (s *Storage) SaveStockKlines(symbol string, klines []downloader.KlineData) 
 	return os.WriteFile(path, data, 0644)
 }
 
-// LoadStockKlines 读取股票K线数据缓存
-func (s *Storage) LoadStockKlines(symbol string) ([]downloader.KlineData, error) {
-	path := filepath.Join(s.dataDir, "data", symbol, "klines.json")
+// LoadStockKlines 读取股票K线数据缓存。period 为空时默认用 "daily"。
+func (s *Storage) LoadStockKlines(symbol string, period string) ([]downloader.KlineData, error) {
+	if period == "" {
+		period = "daily"
+	}
+	filename := "klines.json"
+	if period != "daily" {
+		filename = fmt.Sprintf("klines_%s.json", period)
+	}
+	path := filepath.Join(s.dataDir, "data", symbol, filename)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

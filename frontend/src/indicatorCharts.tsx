@@ -20,7 +20,7 @@ function useKlinesForChart() {
     if (!code || data.length > 0) return
     setLoading(true)
     try {
-      const list = await GetStockKlines(code)
+      const list = await GetStockKlines(code, 'daily')
       setData(list || [])
     } catch {
       setData([])

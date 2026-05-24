@@ -132,9 +132,9 @@ func (a *App) runAnalysisLocked(symbol string, overwriteLatest bool, customRIM *
 			// 拉 2500 条（约 10 年）保证分析后缓存即覆盖 K线 view 的全量需求;
 			// SFL 启用时 DataRouter 内部会忽略 limit 直接拉上市以来全部历史
 			if a.dataRouter != nil {
-				list, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500)
+				list, err = a.dataRouter.FetchKlines(a.ctx, market, code, 2500, "daily")
 			} else {
-				list, err = downloader.FetchStockKlines(a.ctx, market, code, 2500)
+				list, err = downloader.FetchStockKlines(a.ctx, market, code, 2500, "daily")
 			}
 			if err == nil && len(list) >= 20 {
 				klines = list
@@ -813,7 +813,7 @@ func (a *App) runAnalysisLocked(symbol string, overwriteLatest bool, customRIM *
 			debugLog("[AnalyzeStock] %s computed turnoverRate for %d klines, first=%.2f%%", symbol, len(klines), klines[0].TurnoverRate)
 		}
 		debugLog("[AnalyzeStock] %s saving klines cache, len=%d, first turnoverRate=%.2f", symbol, len(klines), klines[0].TurnoverRate)
-		if err := a.storage.SaveStockKlines(symbol, klines); err != nil {
+		if err := a.storage.SaveStockKlines(symbol, "daily", klines); err != nil {
 			debugLog("[AnalyzeStock] %s save klines cache error: %v", symbol, err)
 		} else {
 			debugLog("[AnalyzeStock] %s klines cache saved", symbol)

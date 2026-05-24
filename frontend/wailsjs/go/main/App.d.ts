@@ -87,7 +87,7 @@ export function GetStockConcepts(arg1:string):Promise<downloader.StockConcepts>;
 
 export function GetStockDataHistory(arg1:string):Promise<Array<main.HistoryMeta>>;
 
-export function GetStockKlines(arg1:string):Promise<Array<downloader.KlineData>>;
+export function GetStockKlines(arg1:string,arg2:string):Promise<Array<downloader.KlineData>>;
 
 export function GetStockMoneyflow(arg1:string,arg2:number):Promise<main.StockMoneyflowResult>;
 
@@ -123,7 +123,7 @@ export function RefreshIndustryBaselines():Promise<Record<string, analyzer.Indus
 
 export function RefreshMarketCache():Promise<string>;
 
-export function RefreshStockKlines(arg1:string):Promise<Array<downloader.KlineData>>;
+export function RefreshStockKlines(arg1:string,arg2:string):Promise<Array<downloader.KlineData>>;
 
 export function RefreshStockProfile(arg1:string):Promise<main.StockProfile>;
 
