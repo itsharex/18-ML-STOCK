@@ -155,17 +155,29 @@ function fmt1(v: any): string {
   return n.toFixed(1)
 }
 
-// 日线聚合为周线
+// 日线聚合为周线（按自然周：周一~周日）
 function aggregateToWeekly(data: KlineData[]): KlineData[] {
   if (data.length === 0) return []
   const weeks: Record<string, KlineData[]> = {}
   data.forEach((d) => {
-    const date = new Date(d.time)
-    const day = date.getDay()
-    const diff = date.getDate() - day + (day === 0 ? -6 : 1)
-    const monday = new Date(date)
-    monday.setDate(diff)
-    const key = monday.toISOString().slice(0, 10)
+    // 安全解析 YYYY-MM-DD，避免 toISOString() 时区/Invalid Date 问题
+    const parts = d.time.split('-')
+    if (parts.length !== 3) return
+    const y = parseInt(parts[0], 10)
+    const m = parseInt(parts[1], 10) - 1
+    const day = parseInt(parts[2], 10)
+    if (isNaN(y) || isNaN(m) || isNaN(day)) return
+
+    const date = new Date(y, m, day)
+    const dayOfWeek = date.getDay() // 0=周日, 1=周一...
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+    const monday = new Date(y, m, day + mondayOffset)
+
+    const ky = monday.getFullYear()
+    const km = String(monday.getMonth() + 1).padStart(2, '0')
+    const kd = String(monday.getDate()).padStart(2, '0')
+    const key = `${ky}-${km}-${kd}`
+
     if (!weeks[key]) weeks[key] = []
     weeks[key].push(d)
   })
@@ -326,10 +338,10 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
       legend: {
         data: legendData,
         top: 8,
-        right: 130, // 为周期选择器+设置按钮留出空间
+        right: 108, // 为周期选择器+设置按钮留出空间
         textStyle: { color: '#94a3b8', fontSize: 11 },
         itemStyle: { borderWidth: 0 },
-        itemGap: 8,
+        itemGap: 4,
       },
       tooltip: {
         trigger: 'axis',
@@ -650,18 +662,8 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
             fontSize: 12, cursor: refreshing ? 'wait' : 'pointer',
             opacity: refreshing ? 0.6 : 1,
           }}>
-            {refreshing ? '刷新中…' : '刷新K线'}
+            {refreshing ? '刷新中…' : '刷新'}
           </button>
-          {isExpanded && (
-            <button onClick={() => { setIsExpanded(false); onClose?.() }} style={{
-              padding: '4px 10px', borderRadius: 4,
-              border: '1px solid rgba(148,163,184,0.3)',
-              background: btnBg, color: btnText,
-              fontSize: 12, cursor: 'pointer',
-            }}>
-              退出全屏
-            </button>
-          )}
         </div>
 
         {/* 右上角：周期选择器 + 设置按钮 */}
@@ -693,10 +695,11 @@ export function UnifiedChart({ code, quote: propQuote, initialExpanded, onClose 
             onClick={() => setShowSettings(true)}
             title="均线设置"
             style={{
-              padding: '3px 8px', borderRadius: 4,
+              padding: '2px 7px', borderRadius: 4,
               border: '1px solid rgba(148,163,184,0.3)',
               background: btnBg, color: btnText,
-              fontSize: 12, cursor: 'pointer',
+              fontSize: 15, cursor: 'pointer',
+              lineHeight: 1,
             }}
           >
             ⚙
